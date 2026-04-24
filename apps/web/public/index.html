@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>0xShare | Private Browser File Transfer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-a"></div>
+    <div class="bg-orb orb-b"></div>
+
+    <main class="layout">
+      <header class="hero">
+        <p class="eyebrow">0xLynk / 0xShare</p>
+        <h1>Peer-to-peer file sharing, no cloud middleman.</h1>
+        <p class="subtitle">
+          Create a room code, connect two browsers, and transfer files directly over WebRTC.
+          Signaling is used only for setup and never stores payload bytes.
+        </p>
+        <div id="status-banner" class="status-banner hidden" role="status" aria-live="polite">
+          <span id="status-banner-text">Connecting...</span>
+          <button id="reconnect-now" class="ghost hidden" type="button">Reconnect now</button>
+        </div>
+      </header>
+
+      <section class="panel mode-panel">
+        <h2>Mode</h2>
+        <div class="mode-grid">
+          <button id="mode-sender" class="mode-btn active" type="button">Send files</button>
+          <button id="mode-receiver" class="mode-btn" type="button">Receive files</button>
+        </div>
+      </section>
+
+      <section class="panel session-panel">
+        <div class="panel-head">
+          <h2>Session</h2>
+          <span id="session-state" class="chip chip-muted">idle</span>
+        </div>
+
+        <div class="session-grid">
+          <div class="stack" id="sender-controls">
+            <button id="create-session" class="primary" type="button">Create room code</button>
+            <label for="create-passphrase">Optional room passphrase</label>
+            <input id="create-passphrase" type="password" placeholder="optional (recommended on shared networks)" />
+            <label for="create-join-auth-username">Optional room username</label>
+            <input id="create-join-auth-username" placeholder="optional (ex: demo-user)" />
+            <label for="create-join-auth-password">Optional room password</label>
+            <input id="create-join-auth-password" type="password" placeholder="optional (used with room username)" />
+            <p class="hint">Share the generated 6-digit code with your receiver.</p>
+          </div>
+
+          <div class="stack" id="receiver-controls">
+            <label for="join-code">Room code</label>
+            <div class="input-row">
+              <input id="join-code" inputmode="numeric" maxlength="6" placeholder="123456" />
+              <button id="join-session" class="primary" type="button">Join</button>
+            </div>
+            <label for="join-passphrase">Room passphrase (if set by sender)</label>
+            <input id="join-passphrase" type="password" placeholder="optional" />
+            <label for="join-auth-username">Room username (if set by sender)</label>
+            <input id="join-auth-username" placeholder="optional" />
+            <label for="join-auth-password">Room password (if set by sender)</label>
+            <input id="join-auth-password" type="password" placeholder="optional" />
+          </div>
+        </div>
+
+        <div class="room-display">
+          <div>
+            <p class="k">Room Code</p>
+            <p id="room-code" class="room-code">- - - - - -</p>
+          </div>
+          <div>
+            <p class="k">Role</p>
+            <p id="role-label">none</p>
+          </div>
+          <div>
+            <p class="k">Expires</p>
+            <p id="expires-label">-</p>
+          </div>
+          <div class="room-actions">
+            <button id="leave-session" class="ghost" type="button">Leave session</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel connection-panel">
+        <div class="panel-head">
+          <h2>Connection</h2>
+          <span id="rtc-state" class="chip chip-muted">waiting</span>
+        </div>
+
+        <div class="status-grid">
+          <div>
+            <p class="k">Signaling</p>
+            <p id="ws-state">disconnected</p>
+          </div>
+          <div>
+            <p class="k">Peer</p>
+            <p id="peer-state">not joined</p>
+          </div>
+          <div>
+            <p class="k">DataChannel</p>
+            <p id="dc-state">closed</p>
+          </div>
+        </div>
+
+        <details class="advanced">
+          <summary>Advanced ICE/TURN options</summary>
+          <div class="advanced-grid">
+            <label>
+              TURN URLs
+              <input id="turn-urls" placeholder="turn:turn.example.com:3478" />
+            </label>
+            <label>
+              TURN username
+              <input id="turn-username" placeholder="optional" />
+            </label>
+            <label>
+              TURN credential
+              <input id="turn-credential" placeholder="optional" type="password" />
+            </label>
+          </div>
+        </details>
+      </section>
+
+      <section class="panel transfer-panel">
+        <div class="panel-head">
+          <h2>Transfer</h2>
+          <span id="transfer-state" class="chip chip-muted">idle</span>
+        </div>
+
+        <div id="sender-transfer" class="stack">
+          <label for="file-input">Files to send</label>
+          <input id="file-input" type="file" multiple class="hidden-file-input" />
+          <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="File drop zone">
+            <p class="dropzone-title">Drag files here</p>
+            <p class="hint">or tap to browse files</p>
+          </div>
+          <div class="input-row">
+            <p id="selected-files-label" class="hint">No files selected</p>
+            <button id="browse-files" class="ghost" type="button">Browse files</button>
+            <button id="clear-files" class="ghost" type="button">Clear files</button>
+          </div>
+          <ul id="selected-files-list" class="selected-files-list"></ul>
+
+          <div class="input-row">
+            <label for="chunk-size">Chunk size</label>
+            <select id="chunk-size">
+              <option value="16384">16 KB</option>
+              <option value="32768">32 KB</option>
+              <option value="65536" selected>64 KB</option>
+              <option value="131072">128 KB</option>
+              <option value="262144">256 KB</option>
+            </select>
+          </div>
+
+          <div class="action-row">
+            <button id="start-transfer" class="primary" type="button">Start</button>
+            <button id="pause-transfer" class="ghost" type="button">Pause</button>
+            <button id="resume-transfer" class="ghost" type="button">Resume</button>
+            <button id="cancel-transfer" class="danger" type="button">Cancel</button>
+          </div>
+        </div>
+
+        <div id="receiver-transfer" class="stack hidden">
+          <p class="hint">Wait for sender to start transfer. Received files become downloadable after hash verification.</p>
+        </div>
+
+        <div class="progress-wrap">
+          <div class="progress-head">
+            <span>Overall progress</span>
+            <span id="overall-progress-label">0%</span>
+          </div>
+          <div class="progress-track"><div id="overall-progress-bar" class="progress-bar"></div></div>
+          <p id="overall-bytes" class="hint">0 B / 0 B</p>
+        </div>
+
+        <div class="files-grid">
+          <div>
+            <h3>Outgoing</h3>
+            <ul id="outgoing-list" class="file-list"></ul>
+          </div>
+          <div>
+            <h3>Incoming</h3>
+            <ul id="incoming-list" class="file-list"></ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel log-panel">
+        <div class="panel-head">
+          <h2>Activity</h2>
+          <button id="clear-log" class="ghost" type="button">Clear</button>
+        </div>
+        <pre id="log-output" class="log-output"></pre>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

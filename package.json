@@ -1,0 +1,15 @@
+{
+  "name": "0xlynk",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "start:signaling": "npm --workspace @0xshare/signaling-server run dev",
+    "start:signaling:prod": "npm --workspace @0xshare/signaling-server run start",
+    "test:smoke": "node scripts/smoke-signaling.cjs",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down"
+  }
+}

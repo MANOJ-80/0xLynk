@@ -1,0 +1,17 @@
+services:
+  app:
+    build: .
+    container_name: 0xshare
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      SESSION_TTL_MS: "600000"
+      CLEANUP_INTERVAL_MS: "15000"
+      RECONNECT_GRACE_MS: "30000"
+      MAX_JOIN_ATTEMPTS_PER_MINUTE: "30"
+      MAX_PASSPHRASE_LENGTH: "128"
+      MAX_JOIN_AUTH_USERNAME_LENGTH: "64"
+      MAX_JOIN_AUTH_PASSWORD_LENGTH: "128"
+      MAX_SIGNAL_MESSAGE_BYTES: "65536"
+    restart: unless-stopped
