@@ -1,8 +1,8 @@
-# 0xLynk
+# 0xShare by 0xLynk
 
-0xLynk is a privacy-first browser file sharing project.
+0xShare is a privacy-first browser file transfer product by 0xLynk.
 
-This repository now includes an end-to-end MVP slice of 0xShare:
+This repository includes an end-to-end MVP of 0xShare:
 
 - WebSocket signaling server for room-code pairing and SDP/ICE relay.
 - Browser client with sender/receiver modes.
@@ -15,6 +15,13 @@ This repository now includes an end-to-end MVP slice of 0xShare:
 - `docs/` - product and implementation documents.
 - `apps/signaling-server/` - lightweight WebSocket signaling backend for WebRTC setup.
 - `apps/web/public/` - browser app (HTML/CSS/JS) served by the backend.
+
+## Product UI highlights
+
+- Premium dual-theme interface (Night + Day), with saved user preference.
+- Brand-locked iconography and wordmark system using inline SVG symbols.
+- Rich transfer micro-interactions (active/success/error panel glow, animated progress, status pills).
+- Mobile-optimized layout with accessible reduced-motion fallback.
 
 ## Quick start
 
@@ -171,3 +178,25 @@ npm run test:smoke
 ```
 
 This runs a basic health/config/signaling/reconnect flow against a temporary local port.
+
+## Showcase capture (screenshots + optional GIF)
+
+Generate portfolio/demo assets from a live local app using Playwright:
+
+1. Make sure the app is running:
+
+```bash
+npm run start:signaling:prod
+```
+
+2. In another terminal, capture assets:
+
+```bash
+npm run showcase:capture -- --url http://localhost:8080
+```
+
+Output:
+
+- Screenshots written to `showcase/generated/`.
+- Frame captures written to `showcase/generated/frames/`.
+- If `ffmpeg` is installed, GIF preview generated at `showcase/generated/showcase-preview.gif`.

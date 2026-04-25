@@ -1,4 +1,10 @@
 const STORAGE_KEY = "0xshare.session.v1";
+const THEME_STORAGE_KEY = "0xshare.theme.v1";
+const DEFAULT_THEME = "night";
+const THEMES = {
+  night: { label: "Night", iconHref: "#icon-moon" },
+  day: { label: "Day", iconHref: "#icon-sun" }
+};
 const FALLBACK_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 const BUFFERED_LOW_WATERMARK = 4 * 1024 * 1024;
@@ -92,7 +98,13 @@ const els = {
   turnCredential: document.getElementById("turn-credential"),
   clearLog: document.getElementById("clear-log"),
   reconnectNow: document.getElementById("reconnect-now"),
-  logOutput: document.getElementById("log-output")
+  logOutput: document.getElementById("log-output"),
+  themeToggle: document.getElementById("theme-toggle"),
+  themeToggleLabel: document.getElementById("theme-toggle-label"),
+  themeToggleIcon: document.getElementById("theme-toggle-icon"),
+  outgoingEmpty: document.getElementById("outgoing-empty"),
+  incomingEmpty: document.getElementById("incoming-empty"),
+  transferPanel: document.getElementById("transfer-panel")
 };
 
 const state = {
@@ -148,6 +160,10 @@ const state = {
     incoming: null,
     fileAckWaiters: new Map(),
     fileAckResults: new Map()
+  },
+  ui: {
+    theme: "night",
+    prefersReducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches
   }
 };
 
@@ -182,6 +198,65 @@ function hideStatusBanner() {
 function setChip(el, label, type = "muted") {
   el.textContent = label;
   el.className = `chip ${type === "ok" ? "chip-ok" : type === "warn" ? "chip-warn" : type === "bad" ? "chip-bad" : "chip-muted"}`;
+}
+
+function readStoredTheme() {
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved && Object.prototype.hasOwnProperty.call(THEMES, saved)) {
+      return saved;
+    }
+  } catch {
+    // no-op
+  }
+  return DEFAULT_THEME;
+}
+
+function applyTheme(theme, persist = true) {
+  const nextTheme = Object.prototype.hasOwnProperty.call(THEMES, theme) ? theme : DEFAULT_THEME;
+  state.ui.theme = nextTheme;
+  document.body.dataset.theme = nextTheme;
+  const themeMeta = THEMES[nextTheme];
+  if (els.themeToggleLabel) {
+    els.themeToggleLabel.textContent = themeMeta.label;
+  }
+  if (els.themeToggleIcon) {
+    els.themeToggleIcon.setAttribute("href", themeMeta.iconHref);
+  }
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    } catch {
+      // no-op
+    }
+  }
+}
+
+function toggleTheme() {
+  applyTheme(state.ui.theme === "night" ? "day" : "night");
+}
+
+function normalizeStatusClass(status) {
+  return String(status || "idle").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
+function updateTransferPanelVisualState(status) {
+  if (!els.transferPanel) {
+    return;
+  }
+  const activeStatuses = ["preparing", "hashing", "awaiting_accept", "awaiting_channel", "transferring", "receiving", "paused"];
+  els.transferPanel.classList.toggle("transfer-panel-active", activeStatuses.includes(status));
+  els.transferPanel.classList.toggle("transfer-panel-success", status === "completed");
+  els.transferPanel.classList.toggle("transfer-panel-error", status === "failed" || status === "cancelled");
+}
+
+function updateTransferEmptyStates(outgoingCount, incomingCount) {
+  if (els.outgoingEmpty) {
+    els.outgoingEmpty.classList.toggle("hidden", outgoingCount > 0);
+  }
+  if (els.incomingEmpty) {
+    els.incomingEmpty.classList.toggle("hidden", incomingCount > 0);
+  }
 }
 
 function formatBytes(bytes) {
@@ -1701,6 +1776,7 @@ async function handleSignalMessage(msg) {
 function renderMode() {
   els.modeSender.classList.toggle("active", state.mode === "sender");
   els.modeReceiver.classList.toggle("active", state.mode === "receiver");
+  document.body.dataset.mode = state.mode;
 
   const role = state.session.role || state.mode;
   const senderVisible = role === "sender";
@@ -1819,11 +1895,13 @@ function renderConnection() {
 function makeFileItem(file, incoming = false) {
   const li = document.createElement("li");
   li.className = "file-item";
+  li.dataset.status = normalizeStatusClass(file.status);
 
   const progress = file.size > 0 ? (file.receivedBytes || file.sentBytes || 0) / file.size : 0;
   const progressPct = formatPercent(progress * 100);
 
   const status = file.error ? `${file.status} (${file.error})` : file.status;
+  const statusTag = String(file.status || "idle").replace(/_/g, " ");
 
   li.innerHTML = `
     <div class="file-item-head">
@@ -1832,7 +1910,7 @@ function makeFileItem(file, incoming = false) {
     </div>
     <div class="tiny">${formatBytes(file.receivedBytes || file.sentBytes || 0)} / ${formatBytes(file.size)}</div>
     <div class="progress-track"><div class="progress-bar" style="width:${Math.min(progress * 100, 100)}%"></div></div>
-    <div class="tiny">status: ${status}</div>
+    <div class="tiny"><span class="status-pill status-pill-${normalizeStatusClass(file.status)}">${statusTag}</span> ${status}</div>
   `;
 
   if (incoming && file.downloadUrl && file.status === "verified") {
@@ -1853,6 +1931,7 @@ function makeFileItem(file, incoming = false) {
 
 function renderTransfer() {
   const status = state.transfer.status;
+  updateTransferPanelVisualState(status);
   if (status === "completed") {
     setChip(els.transferState, "completed", "ok");
   } else if (status === "failed" || status === "cancelled") {
@@ -1888,6 +1967,7 @@ function renderTransfer() {
     }
   }
   els.incomingList.replaceChildren(...incomingList);
+  updateTransferEmptyStates(state.transfer.outgoing.length, incomingList.length);
 
   const senderRole = (state.session.role || state.mode) === "sender";
   els.startTransfer.disabled = !senderRole || !dataChannelReady() || !state.selectedFiles.length || state.transfer.running || isTransferBusyStatus(status);
@@ -2071,6 +2151,8 @@ function onCancelTransfer() {
 }
 
 function wireEvents() {
+  els.themeToggle?.addEventListener("click", toggleTheme);
+
   els.modeSender.addEventListener("click", () => {
     state.mode = "sender";
     renderMode();
@@ -2215,6 +2297,7 @@ function wireEvents() {
 }
 
 async function boot() {
+  applyTheme(readStoredTheme(), false);
   wireEvents();
   updateDropzoneCopy();
   updateSelectedFiles([]);
