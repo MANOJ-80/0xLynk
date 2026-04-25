@@ -67,10 +67,76 @@ Stop containers:
 npm run docker:down
 ```
 
+Detached run + logs:
+
+```bash
+npm run docker:up:detached
+npm run docker:logs
+```
+
+## Free Demo Sharing (public URL)
+
+Quickest free way to share a live demo from your machine:
+
+```bash
+npm run demo:share
+```
+
+Then read the Cloudflare tunnel URL from logs (looks like `https://<random>.trycloudflare.com`).
+
+Stop demo stack:
+
+```bash
+npm run demo:down
+```
+
+Notes:
+
+- This is best for quick demos and reviews.
+- URL rotates each time you restart the tunnel.
+- Performance/reliability depends on your local network.
+
+## Free Production-style Deployment
+
+For stable always-free hosting, use an always-free VPS (Oracle Cloud free tier works well):
+
+1. Install Docker + Docker Compose on VM.
+2. Clone this repo and copy env template:
+
+```bash
+cp .env.example .env
+```
+
+3. Start service:
+
+```bash
+npm run docker:up:detached
+```
+
+4. Point your domain to VM and put HTTPS reverse proxy in front (Caddy/Nginx).
+
+For strict NAT/corporate networks, add TURN (`TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL`) in `.env`.
+
+## Render Free Plan Deployment
+
+This repo includes `render.yaml` for Blueprint deployment.
+
+1. Push this repo to GitHub.
+2. In Render dashboard, click `New +` -> `Blueprint`.
+3. Select this repository and apply the blueprint.
+4. Wait for first deploy, then open the generated `*.onrender.com` URL.
+
+Free plan notes:
+
+- Service sleeps on inactivity (cold starts are normal).
+- Large transfers are best while service stays warm.
+- Set TURN env vars in Render dashboard for better connectivity in strict networks.
+
 ## Environment variables
 
 - `PORT` (default `8080`)
 - `SESSION_TTL_MS` (default `600000`)
+- `SESSION_TTL_MS` (default `10800000` in Docker compose for longer demos)
 - `CLEANUP_INTERVAL_MS` (default `15000`)
 - `MAX_JOIN_ATTEMPTS_PER_MINUTE` (default `30`)
 - `RECONNECT_GRACE_MS` (default `30000`)
@@ -82,6 +148,8 @@ npm run docker:down
 - `TURN_URLS` (optional comma-separated turn URLs)
 - `TURN_USERNAME` (optional)
 - `TURN_CREDENTIAL` (optional)
+
+Tip: copy `.env.example` to `.env` before running docker if you want explicit settings.
 
 ## Notes
 

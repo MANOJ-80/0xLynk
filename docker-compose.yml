@@ -3,15 +3,25 @@ services:
     build: .
     container_name: 0xshare
     ports:
-      - "8080:8080"
+      - "${PORT:-8080}:8080"
     environment:
       PORT: "8080"
-      SESSION_TTL_MS: "600000"
-      CLEANUP_INTERVAL_MS: "15000"
-      RECONNECT_GRACE_MS: "30000"
-      MAX_JOIN_ATTEMPTS_PER_MINUTE: "30"
-      MAX_PASSPHRASE_LENGTH: "128"
-      MAX_JOIN_AUTH_USERNAME_LENGTH: "64"
-      MAX_JOIN_AUTH_PASSWORD_LENGTH: "128"
-      MAX_SIGNAL_MESSAGE_BYTES: "65536"
+      SESSION_TTL_MS: "${SESSION_TTL_MS:-10800000}"
+      CLEANUP_INTERVAL_MS: "${CLEANUP_INTERVAL_MS:-15000}"
+      RECONNECT_GRACE_MS: "${RECONNECT_GRACE_MS:-30000}"
+      MAX_JOIN_ATTEMPTS_PER_MINUTE: "${MAX_JOIN_ATTEMPTS_PER_MINUTE:-30}"
+      MAX_PASSPHRASE_LENGTH: "${MAX_PASSPHRASE_LENGTH:-128}"
+      MAX_JOIN_AUTH_USERNAME_LENGTH: "${MAX_JOIN_AUTH_USERNAME_LENGTH:-64}"
+      MAX_JOIN_AUTH_PASSWORD_LENGTH: "${MAX_JOIN_AUTH_PASSWORD_LENGTH:-128}"
+      MAX_SIGNAL_MESSAGE_BYTES: "${MAX_SIGNAL_MESSAGE_BYTES:-65536}"
+      ICE_SERVERS_JSON: "${ICE_SERVERS_JSON:-}"
+      TURN_URLS: "${TURN_URLS:-}"
+      TURN_USERNAME: "${TURN_USERNAME:-}"
+      TURN_CREDENTIAL: "${TURN_CREDENTIAL:-}"
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "-", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     restart: unless-stopped

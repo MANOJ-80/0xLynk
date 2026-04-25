@@ -1,12 +1,47 @@
 const STORAGE_KEY = "0xshare.session.v1";
 const FALLBACK_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
-const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
-const BUFFERED_LOW_WATERMARK = 2 * 1024 * 1024;
+const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
+const BUFFERED_LOW_WATERMARK = 4 * 1024 * 1024;
 const CHUNK_HEADER_SIZE = 13;
+const HASH_READ_CHUNK_BYTES = 4 * 1024 * 1024;
+const SHA256_INIT = [
+  0x6a09e667,
+  0xbb67ae85,
+  0x3c6ef372,
+  0xa54ff53a,
+  0x510e527f,
+  0x9b05688c,
+  0x1f83d9ab,
+  0x5be0cd19
+];
+const SHA256_K = new Uint32Array([
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
+  0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+  0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
+  0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+  0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+  0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+  0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
+  0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+  0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+]);
 const WS_BASE_RECONNECT_DELAY_MS = 700;
 const WS_MAX_RECONNECT_DELAY_MS = 12_000;
 const WS_RECONNECT_JITTER_MS = 250;
 const PEER_RECOVERY_DELAY_MS = 1800;
+const PEER_RECOVERY_MIN_INTERVAL_MS = 7000;
+const MAX_CHUNK_SEND_RETRIES = 3;
+const DEFAULT_CHUNK_SIZE = 32 * 1024;
+const MAX_DC_FLAPS_WINDOW_MS = 30_000;
+const MAX_DC_FLAPS_BEFORE_FAIL = 4;
+const TRANSFER_RENDER_MIN_INTERVAL_MS = 120;
 
 const els = {
   modeSender: document.getElementById("mode-sender"),
@@ -77,6 +112,9 @@ const state = {
   maxJoinAuthUsernameLength: 64,
   maxJoinAuthPasswordLength: 128,
   peerRecoveryTimer: null,
+  peerRecoveryInFlight: false,
+  peerRecoveryLastAttemptAt: 0,
+  dcFlapTimestamps: [],
   session: {
     code: null,
     role: null,
@@ -95,7 +133,7 @@ const state = {
   },
   transfer: {
     status: "idle",
-    chunkSize: 65536,
+    chunkSize: DEFAULT_CHUNK_SIZE,
     paused: false,
     cancelled: false,
     running: false,
@@ -103,6 +141,10 @@ const state = {
     outgoing: [],
     outgoingTotalBytes: 0,
     outgoingSentBytes: 0,
+    currentFileIndex: 0,
+    currentChunkIndex: 0,
+    renderTimer: null,
+    lastRenderTs: 0,
     incoming: null,
     fileAckWaiters: new Map(),
     fileAckResults: new Map()
@@ -267,100 +309,120 @@ function rightRotate(value, amount) {
   return (value >>> amount) | (value << (32 - amount));
 }
 
-function sha256HexFallbackFromArrayBuffer(buffer) {
-  const bytes = new Uint8Array(buffer);
-  const byteLength = bytes.length;
-  const bitLength = BigInt(byteLength) * 8n;
-  const paddedLength = (((byteLength + 9 + 63) >> 6) << 6);
-
-  const message = new Uint8Array(paddedLength);
-  message.set(bytes, 0);
-  message[byteLength] = 0x80;
-  for (let i = 0; i < 8; i += 1) {
-    message[paddedLength - 1 - i] = Number((bitLength >> BigInt(i * 8)) & 0xffn);
-  }
-
-  const hash = new Uint32Array([
-    0x6a09e667,
-    0xbb67ae85,
-    0x3c6ef372,
-    0xa54ff53a,
-    0x510e527f,
-    0x9b05688c,
-    0x1f83d9ab,
-    0x5be0cd19
-  ]);
-
-  const k = new Uint32Array([
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
-    0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
-    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
-    0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-    0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
-    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
-    0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
-    0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
-    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
-  ]);
-
-  const w = new Uint32Array(64);
-
-  for (let offset = 0; offset < message.length; offset += 64) {
-    for (let i = 0; i < 16; i += 1) {
-      const j = offset + i * 4;
-      w[i] = ((message[j] << 24) | (message[j + 1] << 16) | (message[j + 2] << 8) | message[j + 3]) >>> 0;
-    }
-    for (let i = 16; i < 64; i += 1) {
-      const s0 = rightRotate(w[i - 15], 7) ^ rightRotate(w[i - 15], 18) ^ (w[i - 15] >>> 3);
-      const s1 = rightRotate(w[i - 2], 17) ^ rightRotate(w[i - 2], 19) ^ (w[i - 2] >>> 10);
-      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
-    }
-
-    let a = hash[0];
-    let b = hash[1];
-    let c = hash[2];
-    let d = hash[3];
-    let e = hash[4];
-    let f = hash[5];
-    let g = hash[6];
-    let h = hash[7];
-
-    for (let i = 0; i < 64; i += 1) {
-      const s1 = rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25);
-      const ch = (e & f) ^ (~e & g);
-      const temp1 = (h + s1 + ch + k[i] + w[i]) >>> 0;
-      const s0 = rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22);
-      const maj = (a & b) ^ (a & c) ^ (b & c);
-      const temp2 = (s0 + maj) >>> 0;
-
-      h = g;
-      g = f;
-      f = e;
-      e = (d + temp1) >>> 0;
-      d = c;
-      c = b;
-      b = a;
-      a = (temp1 + temp2) >>> 0;
-    }
-
-    hash[0] = (hash[0] + a) >>> 0;
-    hash[1] = (hash[1] + b) >>> 0;
-    hash[2] = (hash[2] + c) >>> 0;
-    hash[3] = (hash[3] + d) >>> 0;
-    hash[4] = (hash[4] + e) >>> 0;
-    hash[5] = (hash[5] + f) >>> 0;
-    hash[6] = (hash[6] + g) >>> 0;
-    hash[7] = (hash[7] + h) >>> 0;
-  }
-
+function hashWordsToHex(hash) {
   return Array.from(hash).map((word) => word.toString(16).padStart(8, "0")).join("");
+}
+
+function createSha256State() {
+  return {
+    hash: new Uint32Array(SHA256_INIT),
+    w: new Uint32Array(64),
+    block: new Uint8Array(64),
+    blockLength: 0,
+    totalBytes: 0n
+  };
+}
+
+function processSha256Block(state, bytes, offset = 0) {
+  const { w, hash } = state;
+  for (let i = 0; i < 16; i += 1) {
+    const j = offset + i * 4;
+    w[i] = ((bytes[j] << 24) | (bytes[j + 1] << 16) | (bytes[j + 2] << 8) | bytes[j + 3]) >>> 0;
+  }
+  for (let i = 16; i < 64; i += 1) {
+    const s0 = rightRotate(w[i - 15], 7) ^ rightRotate(w[i - 15], 18) ^ (w[i - 15] >>> 3);
+    const s1 = rightRotate(w[i - 2], 17) ^ rightRotate(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+    w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+  }
+
+  let a = hash[0];
+  let b = hash[1];
+  let c = hash[2];
+  let d = hash[3];
+  let e = hash[4];
+  let f = hash[5];
+  let g = hash[6];
+  let h = hash[7];
+
+  for (let i = 0; i < 64; i += 1) {
+    const s1 = rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25);
+    const ch = (e & f) ^ (~e & g);
+    const temp1 = (h + s1 + ch + SHA256_K[i] + w[i]) >>> 0;
+    const s0 = rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22);
+    const maj = (a & b) ^ (a & c) ^ (b & c);
+    const temp2 = (s0 + maj) >>> 0;
+
+    h = g;
+    g = f;
+    f = e;
+    e = (d + temp1) >>> 0;
+    d = c;
+    c = b;
+    b = a;
+    a = (temp1 + temp2) >>> 0;
+  }
+
+  hash[0] = (hash[0] + a) >>> 0;
+  hash[1] = (hash[1] + b) >>> 0;
+  hash[2] = (hash[2] + c) >>> 0;
+  hash[3] = (hash[3] + d) >>> 0;
+  hash[4] = (hash[4] + e) >>> 0;
+  hash[5] = (hash[5] + f) >>> 0;
+  hash[6] = (hash[6] + g) >>> 0;
+  hash[7] = (hash[7] + h) >>> 0;
+}
+
+function updateSha256State(state, chunk) {
+  const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+  let offset = 0;
+  state.totalBytes += BigInt(bytes.byteLength);
+
+  if (state.blockLength > 0) {
+    const needed = 64 - state.blockLength;
+    const take = Math.min(needed, bytes.byteLength);
+    state.block.set(bytes.subarray(0, take), state.blockLength);
+    state.blockLength += take;
+    offset = take;
+    if (state.blockLength === 64) {
+      processSha256Block(state, state.block, 0);
+      state.blockLength = 0;
+    }
+  }
+
+  while (offset + 64 <= bytes.byteLength) {
+    processSha256Block(state, bytes, offset);
+    offset += 64;
+  }
+
+  if (offset < bytes.byteLength) {
+    const remain = bytes.subarray(offset);
+    state.block.set(remain, 0);
+    state.blockLength = remain.byteLength;
+  }
+}
+
+function finalizeSha256State(state) {
+  const bitLength = state.totalBytes * 8n;
+  const totalPadLength = state.blockLength < 56 ? 64 : 128;
+  const finalBlock = new Uint8Array(totalPadLength);
+  finalBlock.set(state.block.subarray(0, state.blockLength), 0);
+  finalBlock[state.blockLength] = 0x80;
+  for (let i = 0; i < 8; i += 1) {
+    finalBlock[totalPadLength - 1 - i] = Number((bitLength >> BigInt(i * 8)) & 0xffn);
+  }
+
+  processSha256Block(state, finalBlock, 0);
+  if (totalPadLength === 128) {
+    processSha256Block(state, finalBlock, 64);
+  }
+
+  return hashWordsToHex(state.hash);
+}
+
+function sha256HexFallbackFromArrayBuffer(buffer) {
+  const state = createSha256State();
+  updateSha256State(state, new Uint8Array(buffer));
+  return finalizeSha256State(state);
 }
 
 async function sha256HexFromArrayBuffer(buffer) {
@@ -372,8 +434,90 @@ async function sha256HexFromArrayBuffer(buffer) {
   return sha256HexFallbackFromArrayBuffer(buffer);
 }
 
-async function sha256HexFromBlob(blob) {
-  return sha256HexFromArrayBuffer(await blob.arrayBuffer());
+async function sha256HexFromBlob(blob, onProgress) {
+  if (blob && typeof blob.stream === "function") {
+    const state = createSha256State();
+    const reader = blob.stream().getReader();
+    let processedBytes = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        if (!value || !value.byteLength) {
+          continue;
+        }
+        updateSha256State(state, value);
+        processedBytes += value.byteLength;
+        if (typeof onProgress === "function") {
+          onProgress(processedBytes, blob.size);
+        }
+      }
+      return finalizeSha256State(state);
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  const state = createSha256State();
+  let processedBytes = 0;
+  for (let offset = 0; offset < blob.size; offset += HASH_READ_CHUNK_BYTES) {
+    const end = Math.min(offset + HASH_READ_CHUNK_BYTES, blob.size);
+    const chunk = await blob.slice(offset, end).arrayBuffer();
+    updateSha256State(state, new Uint8Array(chunk));
+    processedBytes = end;
+    if (typeof onProgress === "function") {
+      onProgress(processedBytes, blob.size);
+    }
+  }
+  return finalizeSha256State(state);
+}
+
+function normalizeHashReadError(error) {
+  const name = String(error?.name || "");
+  if (name === "NotReadableError") {
+    return "File became unreadable (moved, locked, or permission changed). Re-select the file and retry.";
+  }
+  if (name === "NotFoundError") {
+    return "File is no longer available at the selected path. Re-select it and retry.";
+  }
+  if (name === "AbortError") {
+    return "File read was interrupted. Please retry.";
+  }
+  return error?.message || "Failed to read selected file.";
+}
+
+function isTransferBusyStatus(status) {
+  return ["preparing", "hashing", "awaiting_accept", "awaiting_channel", "transferring"].includes(status);
+}
+
+function scheduleTransferRender() {
+  const nowTs = Date.now();
+  if (state.transfer.lastRenderTs && nowTs - state.transfer.lastRenderTs < TRANSFER_RENDER_MIN_INTERVAL_MS) {
+    if (state.transfer.renderTimer) {
+      return;
+    }
+    const delay = TRANSFER_RENDER_MIN_INTERVAL_MS - (nowTs - state.transfer.lastRenderTs);
+    state.transfer.renderTimer = setTimeout(() => {
+      state.transfer.renderTimer = null;
+      state.transfer.lastRenderTs = Date.now();
+      renderTransfer();
+    }, Math.max(0, delay));
+    return;
+  }
+
+  state.transfer.lastRenderTs = nowTs;
+  renderTransfer();
+}
+
+function recordDataChannelFlap() {
+  const nowTs = Date.now();
+  state.dcFlapTimestamps = [...state.dcFlapTimestamps, nowTs].filter((ts) => nowTs - ts <= MAX_DC_FLAPS_WINDOW_MS);
+}
+
+function tooManyDataChannelFlaps() {
+  return state.dcFlapTimestamps.length >= MAX_DC_FLAPS_BEFORE_FAIL;
 }
 
 function persistSession() {
@@ -410,6 +554,8 @@ function loadPersistedSession() {
 
 function clearSessionState() {
   cancelPeerRecovery();
+  state.peerRecoveryInFlight = false;
+  state.peerRecoveryLastAttemptAt = 0;
   state.session = {
     code: null,
     role: null,
@@ -425,6 +571,10 @@ function clearSessionState() {
 }
 
 function resetTransferState() {
+  if (state.transfer.renderTimer) {
+    clearTimeout(state.transfer.renderTimer);
+    state.transfer.renderTimer = null;
+  }
   state.transfer.status = "idle";
   state.transfer.paused = false;
   state.transfer.cancelled = false;
@@ -433,9 +583,13 @@ function resetTransferState() {
   state.transfer.outgoing = [];
   state.transfer.outgoingTotalBytes = 0;
   state.transfer.outgoingSentBytes = 0;
+  state.transfer.currentFileIndex = 0;
+  state.transfer.currentChunkIndex = 0;
+  state.transfer.lastRenderTs = 0;
   state.transfer.fileAckWaiters.forEach((waiter) => waiter.reject(new Error("transfer_reset")));
   state.transfer.fileAckWaiters.clear();
   state.transfer.fileAckResults.clear();
+  state.dcFlapTimestamps = [];
 
   if (state.transfer.incoming?.files) {
     state.transfer.incoming.files.forEach((file) => {
@@ -532,19 +686,34 @@ function schedulePeerRecovery() {
     return;
   }
 
+  if (state.peerRecoveryInFlight) {
+    return;
+  }
+
+  const nowTs = Date.now();
+  if (state.peerRecoveryLastAttemptAt && nowTs - state.peerRecoveryLastAttemptAt < PEER_RECOVERY_MIN_INTERVAL_MS) {
+    return;
+  }
+
   state.peerRecoveryTimer = setTimeout(async () => {
     state.peerRecoveryTimer = null;
     if (!state.session.code || !state.peerJoined || state.session.role !== "sender") {
       return;
     }
-    if (state.rtc.pc?.connectionState === "connected" || dataChannelReady()) {
+    if (dataChannelReady()) {
       return;
     }
 
     log("Peer signaling restored, re-negotiating WebRTC");
-    teardownPeerConnection();
-    await createAndSendOffer();
-    renderAll();
+    state.peerRecoveryInFlight = true;
+    state.peerRecoveryLastAttemptAt = Date.now();
+    try {
+      teardownPeerConnection();
+      await createAndSendOffer();
+      renderAll();
+    } finally {
+      state.peerRecoveryInFlight = false;
+    }
   }, PEER_RECOVERY_DELAY_MS);
 }
 
@@ -577,6 +746,10 @@ function connectSignaling() {
     if (persisted) {
       sendWs({ type: "reconnect_session", code: persisted.code, token: persisted.token });
       log("Attempting signaling reconnect", { code: persisted.code, role: persisted.role });
+    }
+
+    if (state.session.role === "sender" && state.peerJoined && !dataChannelReady()) {
+      schedulePeerRecovery();
     }
   });
 
@@ -695,20 +868,56 @@ function setupDataChannel(dc) {
   dc.binaryType = "arraybuffer";
 
   dc.addEventListener("open", () => {
+    state.dcFlapTimestamps = [];
     dc.bufferedAmountLowThreshold = BUFFERED_LOW_WATERMARK;
     log("DataChannel open");
+
+    if (
+      state.session.role === "sender"
+      && state.transfer.status === "awaiting_channel"
+      && !state.transfer.running
+      && state.transfer.outgoing.length
+      && !state.peerRecoveryInFlight
+    ) {
+      log("Resuming transfer after channel reopen");
+      runOutgoingTransfer();
+    }
+
     renderConnection();
     renderTransfer();
   });
 
   dc.addEventListener("close", () => {
     log("DataChannel closed");
+    recordDataChannelFlap();
+    if (state.session.role === "sender" && state.transfer.running) {
+      if (tooManyDataChannelFlaps()) {
+        state.transfer.status = "failed";
+        state.transfer.running = false;
+        showStatusBanner("Transfer stopped: unstable peer channel. Lower chunk size to 32 KB or 16 KB and restart with a new room.", "bad", false);
+        log("Transfer stopped due to repeated DataChannel flaps", { flaps: state.dcFlapTimestamps.length });
+        renderTransfer();
+        return;
+      }
+      state.transfer.status = "awaiting_channel";
+      if (!state.peerRecoveryInFlight) {
+        schedulePeerRecovery();
+      }
+    }
     renderConnection();
     renderTransfer();
+    renderStatusBanner();
   });
 
   dc.addEventListener("error", (event) => {
     log("DataChannel error", { message: event.message || "unknown" });
+    if (
+      state.session.role === "sender"
+      && (state.transfer.running || state.transfer.status === "awaiting_accept")
+      && !state.peerRecoveryInFlight
+    ) {
+      schedulePeerRecovery();
+    }
     renderConnection();
     renderTransfer();
   });
@@ -743,7 +952,7 @@ function ensurePeerConnection() {
     renderStatusBanner();
     if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
       log("Peer connection state", { state: pc.connectionState });
-      if (state.session.role === "sender" && state.peerJoined) {
+      if (state.session.role === "sender" && state.peerJoined && !state.transfer.running) {
         schedulePeerRecovery();
       }
     }
@@ -783,6 +992,10 @@ function teardownPeerConnection() {
 
 async function createAndSendOffer() {
   if (state.session.role !== "sender" || !state.peerJoined) {
+    return;
+  }
+
+  if (!state.wsConnected || !state.session.code) {
     return;
   }
 
@@ -917,6 +1130,8 @@ function buildOutgoingPlan(files, chunkSize) {
     sha256: null,
     totalChunks: Math.ceil(file.size / chunkSize),
     sentBytes: 0,
+    nextChunkIndex: 0,
+    beginSent: false,
     status: "queued",
     error: null
   }));
@@ -929,14 +1144,29 @@ function buildOutgoingPlan(files, chunkSize) {
 
 async function prepareOutgoingHashes() {
   state.transfer.status = "hashing";
-  renderTransfer();
+  scheduleTransferRender();
 
   for (const fileRecord of state.transfer.outgoing) {
-    fileRecord.status = "hashing";
-    renderTransfer();
-    fileRecord.sha256 = await sha256HexFromArrayBuffer(await fileRecord.file.arrayBuffer());
-    fileRecord.status = "ready";
-    renderTransfer();
+    try {
+      fileRecord.status = "hashing";
+      fileRecord.error = null;
+      fileRecord.sentBytes = 0;
+      scheduleTransferRender();
+      fileRecord.sha256 = await sha256HexFromBlob(fileRecord.file, (processedBytes) => {
+        fileRecord.sentBytes = processedBytes;
+        scheduleTransferRender();
+      });
+      fileRecord.sentBytes = fileRecord.size;
+      fileRecord.nextChunkIndex = 0;
+      fileRecord.beginSent = false;
+      fileRecord.status = "ready";
+      scheduleTransferRender();
+    } catch (error) {
+      fileRecord.status = "failed";
+      fileRecord.error = normalizeHashReadError(error);
+      scheduleTransferRender();
+      throw new Error(fileRecord.error);
+    }
   }
 }
 
@@ -946,16 +1176,33 @@ async function sendChunk(fileRecord, chunkIndex, trackProgress = true) {
   const blob = fileRecord.file.slice(start, end);
   const payload = await blob.arrayBuffer();
 
-  await waitForBufferedLowWatermark();
-  await waitWhilePausedOrCancelled();
+  for (let attempt = 0; attempt <= MAX_CHUNK_SEND_RETRIES; attempt += 1) {
+    await waitWhilePausedOrCancelled();
+    if (!dataChannelReady()) {
+      if (attempt === MAX_CHUNK_SEND_RETRIES) {
+        throw new Error("datachannel_not_open");
+      }
+      await sleep(250 + attempt * 250);
+      continue;
+    }
 
-  state.rtc.dc.send(encodeChunkFrame(fileRecord.id, chunkIndex, payload));
-  const sent = end - start;
-  fileRecord.sentBytes = Math.max(fileRecord.sentBytes, end);
-  if (trackProgress) {
-    state.transfer.outgoingSentBytes += sent;
+    await waitForBufferedLowWatermark();
+    try {
+      state.rtc.dc.send(encodeChunkFrame(fileRecord.id, chunkIndex, payload));
+      const sent = end - start;
+      fileRecord.sentBytes = Math.max(fileRecord.sentBytes, end);
+      if (trackProgress) {
+        state.transfer.outgoingSentBytes = Math.min(state.transfer.outgoingTotalBytes, state.transfer.outgoingSentBytes + sent);
+      }
+      scheduleTransferRender();
+      return;
+    } catch (error) {
+      if (attempt === MAX_CHUNK_SEND_RETRIES) {
+        throw error;
+      }
+      await sleep(250 + attempt * 250);
+    }
   }
-  renderTransfer();
 }
 
 function waitForFileAck(fileRecord) {
@@ -1006,61 +1253,97 @@ async function resendMissingChunks(fileId, missingIndexes = []) {
 }
 
 async function sendFile(fileRecord) {
-  fileRecord.status = "sending";
-  fileRecord.sentBytes = 0;
-  renderTransfer();
+  if (!fileRecord.beginSent) {
+    fileRecord.status = "sending";
+    fileRecord.sentBytes = 0;
+    fileRecord.nextChunkIndex = 0;
+    sendControl({
+      type: "file_begin",
+      transferId: state.transfer.transferId,
+      fileId: fileRecord.id,
+      name: fileRecord.name,
+      size: fileRecord.size,
+      mimeType: fileRecord.type,
+      sha256: fileRecord.sha256,
+      totalChunks: fileRecord.totalChunks,
+      chunkSize: state.transfer.chunkSize
+    });
+    fileRecord.beginSent = true;
+    scheduleTransferRender();
+  } else {
+    fileRecord.status = "sending";
+    scheduleTransferRender();
+  }
 
-  sendControl({
-    type: "file_begin",
-    transferId: state.transfer.transferId,
-    fileId: fileRecord.id,
-    name: fileRecord.name,
-    size: fileRecord.size,
-    mimeType: fileRecord.type,
-    sha256: fileRecord.sha256,
-    totalChunks: fileRecord.totalChunks,
-    chunkSize: state.transfer.chunkSize
-  });
-
-  for (let chunkIndex = 0; chunkIndex < fileRecord.totalChunks; chunkIndex += 1) {
+  for (let chunkIndex = fileRecord.nextChunkIndex || 0; chunkIndex < fileRecord.totalChunks; chunkIndex += 1) {
     await sendChunk(fileRecord, chunkIndex);
+    fileRecord.nextChunkIndex = chunkIndex + 1;
+    state.transfer.currentChunkIndex = fileRecord.nextChunkIndex;
   }
 
   const ackPromise = waitForFileAck(fileRecord);
   fileRecord.status = "awaiting_verify";
+  state.transfer.currentChunkIndex = fileRecord.totalChunks;
   sendControl({ type: "file_complete", transferId: state.transfer.transferId, fileId: fileRecord.id });
-  renderTransfer();
+  scheduleTransferRender();
 
   await ackPromise;
   fileRecord.status = "verified";
-  renderTransfer();
+  scheduleTransferRender();
 }
 
 async function runOutgoingTransfer() {
   if (state.transfer.running) {
     return;
   }
+
+  if (!dataChannelReady()) {
+    if (state.session.role === "sender" && state.peerJoined) {
+      schedulePeerRecovery();
+    }
+    state.transfer.status = "awaiting_channel";
+    showStatusBanner("Waiting for peer channel to reopen before sending.", "warn", false);
+    renderTransfer();
+    return;
+  }
+
   state.transfer.running = true;
   state.transfer.status = "transferring";
-  renderTransfer();
+  scheduleTransferRender();
 
   try {
-    for (const fileRecord of state.transfer.outgoing) {
+    for (let fileIndex = state.transfer.currentFileIndex || 0; fileIndex < state.transfer.outgoing.length; fileIndex += 1) {
+      state.transfer.currentFileIndex = fileIndex;
+      const fileRecord = state.transfer.outgoing[fileIndex];
       if (state.transfer.cancelled) {
         throw new Error("transfer_cancelled");
       }
       await sendFile(fileRecord);
+      state.transfer.currentFileIndex = fileIndex + 1;
+      state.transfer.currentChunkIndex = 0;
     }
 
     sendControl({ type: "transfer_complete", transferId: state.transfer.transferId });
     state.transfer.status = "completed";
     log("Transfer completed", { transferId: state.transfer.transferId });
   } catch (error) {
-    state.transfer.status = state.transfer.cancelled ? "cancelled" : "failed";
-    log("Transfer failed", { message: error.message });
+    if (error?.message === "datachannel_not_open" || error?.message?.includes("readyState is not 'open'")) {
+      if (state.session.role === "sender" && state.peerJoined) {
+        schedulePeerRecovery();
+      }
+      state.transfer.status = "awaiting_channel";
+      showStatusBanner("Connection dropped mid-transfer. Auto-resume when channel reconnects.", "warn", false);
+      log("Transfer paused awaiting channel reopen", {
+        fileIndex: state.transfer.currentFileIndex,
+        chunkIndex: state.transfer.currentChunkIndex
+      });
+    } else {
+      state.transfer.status = state.transfer.cancelled ? "cancelled" : "failed";
+      log("Transfer failed", { message: error.message });
+    }
   } finally {
     state.transfer.running = false;
-    renderTransfer();
+    scheduleTransferRender();
   }
 }
 
@@ -1180,6 +1463,9 @@ async function handleDataControlMessage(message) {
       if (state.session.role !== "receiver") {
         return;
       }
+      if (state.transfer.incoming && state.transfer.incoming.transferId === message.transferId) {
+        return;
+      }
       setIncomingTransfer(message);
       sendControl({ type: "transfer_accept", transferId: message.transferId });
       log("Transfer offer accepted", { transferId: message.transferId });
@@ -1188,6 +1474,9 @@ async function handleDataControlMessage(message) {
 
     case "transfer_accept": {
       if (state.session.role !== "sender" || message.transferId !== state.transfer.transferId) {
+        return;
+      }
+      if (state.transfer.running) {
         return;
       }
       log("Transfer accepted by receiver");
@@ -1395,6 +1684,9 @@ async function handleSignalMessage(msg) {
 
   if (msg.type === "session_closed" || msg.type === "session_expired") {
     log(msg.type, { code: msg.code, reason: msg.reason });
+    if (msg.type === "session_expired") {
+      showStatusBanner("Room expired after inactivity. Create or join a new room to continue.", "bad", false);
+    }
     clearSessionState();
     renderAll();
     return;
@@ -1463,6 +1755,16 @@ function renderStatusBanner() {
 
   if (state.transfer.status === "paused") {
     showStatusBanner("Transfer paused. Tap resume when ready.", "warn", false);
+    return;
+  }
+
+  if (state.transfer.status === "awaiting_accept") {
+    showStatusBanner("Offer sent. Waiting for receiver confirmation.", "muted", false);
+    return;
+  }
+
+  if (state.transfer.status === "awaiting_channel") {
+    showStatusBanner("Transfer is waiting for WebRTC channel to reconnect.", "warn", false);
     return;
   }
 
@@ -1555,7 +1857,7 @@ function renderTransfer() {
     setChip(els.transferState, "completed", "ok");
   } else if (status === "failed" || status === "cancelled") {
     setChip(els.transferState, status, "bad");
-  } else if (status === "transferring" || status === "receiving" || status === "hashing" || status === "paused") {
+  } else if (status === "transferring" || status === "receiving" || status === "hashing" || status === "paused" || status === "awaiting_channel" || status === "awaiting_accept") {
     setChip(els.transferState, status, "warn");
   } else {
     setChip(els.transferState, status, "muted");
@@ -1588,7 +1890,7 @@ function renderTransfer() {
   els.incomingList.replaceChildren(...incomingList);
 
   const senderRole = (state.session.role || state.mode) === "sender";
-  els.startTransfer.disabled = !senderRole || !dataChannelReady() || !state.selectedFiles.length || state.transfer.running;
+  els.startTransfer.disabled = !senderRole || !dataChannelReady() || !state.selectedFiles.length || state.transfer.running || isTransferBusyStatus(status);
   els.pauseTransfer.disabled = !senderRole || !state.transfer.running || state.transfer.paused;
   els.resumeTransfer.disabled = !senderRole || !state.transfer.running || !state.transfer.paused;
   els.cancelTransfer.disabled = !state.transfer.running && status !== "receiving";
@@ -1682,9 +1984,17 @@ async function onStartTransfer() {
     return;
   }
 
+  if (isTransferBusyStatus(state.transfer.status) || state.transfer.running) {
+    log("Transfer already in progress or pending. Wait for current flow to finish.");
+    return;
+  }
+
   resetTransferState();
 
-  state.transfer.chunkSize = Number(els.chunkSize.value || 65536);
+  state.transfer.chunkSize = Number(els.chunkSize.value || DEFAULT_CHUNK_SIZE);
+  if (state.transfer.chunkSize > 64 * 1024) {
+    log("Large chunks may destabilize long transfers. Recommended: 16-64 KB for multi-GB files.");
+  }
   const plan = buildOutgoingPlan(files, state.transfer.chunkSize);
   state.transfer.outgoing = plan.outgoing;
   state.transfer.outgoingTotalBytes = plan.totalBytes;
@@ -1709,10 +2019,12 @@ async function onStartTransfer() {
     });
     state.transfer.status = "awaiting_accept";
     renderTransfer();
-    log("Transfer offer sent", { files: state.transfer.outgoing.length });
+    log("Transfer offer sent", { files: state.transfer.outgoing.length, transferId: state.transfer.transferId });
   } catch (error) {
     state.transfer.status = "failed";
-    log("Transfer prepare failed", { message: error.message });
+    const readable = normalizeHashReadError(error);
+    showStatusBanner(readable, "bad", false);
+    log("Transfer prepare failed", { message: readable });
     renderTransfer();
   }
 }
@@ -1906,6 +2218,9 @@ async function boot() {
   wireEvents();
   updateDropzoneCopy();
   updateSelectedFiles([]);
+  if (els.chunkSize && !els.chunkSize.value) {
+    els.chunkSize.value = String(DEFAULT_CHUNK_SIZE);
+  }
   renderAll();
   await loadServerConfig();
   connectSignaling();

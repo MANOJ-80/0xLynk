@@ -42,3 +42,11 @@ npm run docker:up
 ```
 
 Open `http://localhost:8080`.
+
+For a temporary public URL (free demo share):
+
+```bash
+npm run demo:share
+```
+
+This starts `cloudflared` alongside app and prints a `trycloudflare.com` URL in logs.

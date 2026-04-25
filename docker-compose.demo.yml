@@ -1,0 +1,9 @@
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: 0xshare-tunnel
+    command: tunnel --no-autoupdate --url http://app:8080
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped

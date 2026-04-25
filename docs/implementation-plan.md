@@ -24,6 +24,7 @@
 - Add optional persisted resume metadata across refresh (advanced scope).
 - Add richer diagnostics dashboard and retention strategy.
 - Room passphrase + optional room username/password join gate now implemented.
+- Free demo deployment path now included via Docker + Cloudflare quick tunnel compose overlay.
 
 ## Optional next phases
 

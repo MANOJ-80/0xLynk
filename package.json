@@ -10,6 +10,10 @@
     "start:signaling:prod": "npm --workspace @0xshare/signaling-server run start",
     "test:smoke": "node scripts/smoke-signaling.cjs",
     "docker:up": "docker compose up --build",
-    "docker:down": "docker compose down"
+    "docker:up:detached": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f app",
+    "demo:share": "docker compose -f docker-compose.yml -f docker-compose.demo.yml up --build",
+    "demo:down": "docker compose -f docker-compose.yml -f docker-compose.demo.yml down"
   }
 }
