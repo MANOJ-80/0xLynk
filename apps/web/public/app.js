@@ -6,10 +6,14 @@ const THEMES = {
   day: { label: "Day", iconHref: "#icon-sun" }
 };
 const FALLBACK_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
-const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
-const BUFFERED_LOW_WATERMARK = 4 * 1024 * 1024;
+const DEFAULT_MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
+const DEFAULT_BUFFERED_LOW_WATERMARK = 4 * 1024 * 1024;
 const CHUNK_HEADER_SIZE = 13;
 const HASH_READ_CHUNK_BYTES = 4 * 1024 * 1024;
+const TELEMETRY_INTERVAL_MS = 1000;
+const FLOW_RTT_SLOW_MS = 180;
+const FLOW_RTT_FAST_MS = 60;
+const AUTO_CHUNK_SIZE = 32 * 1024;
 const SHA256_INIT = [
   0x6a09e667,
   0xbb67ae85,
@@ -84,6 +88,8 @@ const els = {
   browseFiles: document.getElementById("browse-files"),
   clearFiles: document.getElementById("clear-files"),
   chunkSize: document.getElementById("chunk-size"),
+  chooseSaveDir: document.getElementById("choose-save-dir"),
+  saveDirLabel: document.getElementById("save-dir-label"),
   startTransfer: document.getElementById("start-transfer"),
   pauseTransfer: document.getElementById("pause-transfer"),
   resumeTransfer: document.getElementById("resume-transfer"),
@@ -104,7 +110,11 @@ const els = {
   themeToggleIcon: document.getElementById("theme-toggle-icon"),
   outgoingEmpty: document.getElementById("outgoing-empty"),
   incomingEmpty: document.getElementById("incoming-empty"),
-  transferPanel: document.getElementById("transfer-panel")
+  transferPanel: document.getElementById("transfer-panel"),
+  telemetrySpeed: document.getElementById("telemetry-speed"),
+  telemetryRtt: document.getElementById("telemetry-rtt"),
+  telemetryPath: document.getElementById("telemetry-path"),
+  telemetryBuffer: document.getElementById("telemetry-buffer")
 };
 
 const state = {
@@ -146,6 +156,9 @@ const state = {
   transfer: {
     status: "idle",
     chunkSize: DEFAULT_CHUNK_SIZE,
+    adaptiveChunkSize: true,
+    maxBufferedBytes: DEFAULT_MAX_BUFFERED_BYTES,
+    lowWatermarkBytes: DEFAULT_BUFFERED_LOW_WATERMARK,
     paused: false,
     cancelled: false,
     running: false,
@@ -157,9 +170,29 @@ const state = {
     currentChunkIndex: 0,
     renderTimer: null,
     lastRenderTs: 0,
+    telemetryTimer: null,
+    messageQueue: Promise.resolve(),
+    saveDirectoryHandle: null,
     incoming: null,
     fileAckWaiters: new Map(),
-    fileAckResults: new Map()
+    fileAckResults: new Map(),
+    telemetry: {
+      startedAt: 0,
+      completedAt: 0,
+      lastSampleAt: 0,
+      lastBytesDone: 0,
+      currentBps: 0,
+      averageBps: 0,
+      bufferedAmount: 0,
+      rttMs: null,
+      availableOutgoingBps: null,
+      path: "unknown",
+      candidateType: "unknown",
+      chunksSent: 0,
+      chunksReceived: 0,
+      retries: 0,
+      diskWrites: 0
+    }
   },
   ui: {
     theme: "night",
@@ -275,6 +308,37 @@ function formatBytes(bytes) {
 
 function formatPercent(value) {
   return `${Math.max(0, Math.min(100, value)).toFixed(1)}%`;
+}
+
+function formatRate(bytesPerSecond) {
+  if (!bytesPerSecond || bytesPerSecond < 1) {
+    return "-";
+  }
+  return `${formatBytes(bytesPerSecond)}/s`;
+}
+
+function resetTelemetry() {
+  state.transfer.telemetry = {
+    startedAt: 0,
+    completedAt: 0,
+    lastSampleAt: 0,
+    lastBytesDone: 0,
+    currentBps: 0,
+    averageBps: 0,
+    bufferedAmount: 0,
+    rttMs: null,
+    availableOutgoingBps: null,
+    path: "unknown",
+    candidateType: "unknown",
+    chunksSent: 0,
+    chunksReceived: 0,
+    retries: 0,
+    diskWrites: 0
+  };
+}
+
+function currentTransferBytesDone() {
+  return Math.max(state.transfer.outgoingSentBytes, state.transfer.incoming?.receivedBytes || 0);
 }
 
 function formatExpiry(ts) {
@@ -564,7 +628,7 @@ function normalizeHashReadError(error) {
 }
 
 function isTransferBusyStatus(status) {
-  return ["preparing", "hashing", "awaiting_accept", "awaiting_channel", "transferring"].includes(status);
+  return ["preparing", "awaiting_accept", "awaiting_channel", "transferring"].includes(status);
 }
 
 function scheduleTransferRender() {
@@ -646,6 +710,7 @@ function clearSessionState() {
 }
 
 function resetTransferState() {
+  stopTelemetry();
   if (state.transfer.renderTimer) {
     clearTimeout(state.transfer.renderTimer);
     state.transfer.renderTimer = null;
@@ -661,6 +726,9 @@ function resetTransferState() {
   state.transfer.currentFileIndex = 0;
   state.transfer.currentChunkIndex = 0;
   state.transfer.lastRenderTs = 0;
+  state.transfer.messageQueue = Promise.resolve();
+  state.transfer.maxBufferedBytes = DEFAULT_MAX_BUFFERED_BYTES;
+  state.transfer.lowWatermarkBytes = DEFAULT_BUFFERED_LOW_WATERMARK;
   state.transfer.fileAckWaiters.forEach((waiter) => waiter.reject(new Error("transfer_reset")));
   state.transfer.fileAckWaiters.clear();
   state.transfer.fileAckResults.clear();
@@ -671,10 +739,14 @@ function resetTransferState() {
       if (file.downloadUrl) {
         URL.revokeObjectURL(file.downloadUrl);
       }
+      if (file.writer) {
+        void file.writer.abort().catch(() => {});
+      }
     });
   }
 
   state.transfer.incoming = null;
+  resetTelemetry();
   renderTransfer();
 }
 
@@ -944,7 +1016,7 @@ function setupDataChannel(dc) {
 
   dc.addEventListener("open", () => {
     state.dcFlapTimestamps = [];
-    dc.bufferedAmountLowThreshold = BUFFERED_LOW_WATERMARK;
+    applyFlowControlProfile();
     log("DataChannel open");
 
     if (
@@ -998,7 +1070,11 @@ function setupDataChannel(dc) {
   });
 
   dc.addEventListener("message", (event) => {
-    void handleDataChannelMessage(event.data);
+    state.transfer.messageQueue = state.transfer.messageQueue
+      .then(() => handleDataChannelMessage(event.data))
+      .catch((error) => {
+        log("DataChannel message handling failed", { message: error.message });
+      });
   });
 }
 
@@ -1129,6 +1205,116 @@ function dataChannelReady() {
   return Boolean(state.rtc.dc && state.rtc.dc.readyState === "open");
 }
 
+function applyFlowControlProfile() {
+  const telemetry = state.transfer.telemetry;
+  const rtt = telemetry.rttMs || 0;
+  const relay = telemetry.candidateType === "relay" || telemetry.path === "relay";
+  let maxBufferedBytes = DEFAULT_MAX_BUFFERED_BYTES;
+  let lowWatermarkBytes = DEFAULT_BUFFERED_LOW_WATERMARK;
+
+  if (relay || rtt >= FLOW_RTT_SLOW_MS) {
+    maxBufferedBytes = 2 * 1024 * 1024;
+    lowWatermarkBytes = 512 * 1024;
+  } else if (rtt > 0 && rtt <= FLOW_RTT_FAST_MS) {
+    maxBufferedBytes = 12 * 1024 * 1024;
+    lowWatermarkBytes = 6 * 1024 * 1024;
+  }
+
+  state.transfer.maxBufferedBytes = maxBufferedBytes;
+  state.transfer.lowWatermarkBytes = lowWatermarkBytes;
+  if (state.rtc.dc) {
+    state.rtc.dc.bufferedAmountLowThreshold = lowWatermarkBytes;
+  }
+}
+
+async function samplePeerStats() {
+  const pc = state.rtc.pc;
+  if (!pc || typeof pc.getStats !== "function") {
+    return;
+  }
+
+  try {
+    const report = await pc.getStats();
+    let selectedPair = null;
+    const localCandidates = new Map();
+    const remoteCandidates = new Map();
+
+    report.forEach((entry) => {
+      if (entry.type === "local-candidate") {
+        localCandidates.set(entry.id, entry);
+      } else if (entry.type === "remote-candidate") {
+        remoteCandidates.set(entry.id, entry);
+      } else if (entry.type === "candidate-pair" && (entry.selected || entry.nominated) && entry.state === "succeeded") {
+        selectedPair = entry;
+      } else if (entry.type === "transport" && entry.selectedCandidatePairId) {
+        selectedPair = report.get(entry.selectedCandidatePairId) || selectedPair;
+      }
+    });
+
+    if (!selectedPair) {
+      return;
+    }
+
+    const local = localCandidates.get(selectedPair.localCandidateId);
+    const remote = remoteCandidates.get(selectedPair.remoteCandidateId);
+    const candidateType = local?.candidateType || remote?.candidateType || "unknown";
+
+    state.transfer.telemetry.rttMs = Number.isFinite(selectedPair.currentRoundTripTime)
+      ? Math.round(selectedPair.currentRoundTripTime * 1000)
+      : state.transfer.telemetry.rttMs;
+    state.transfer.telemetry.availableOutgoingBps = Number.isFinite(selectedPair.availableOutgoingBitrate)
+      ? selectedPair.availableOutgoingBitrate / 8
+      : state.transfer.telemetry.availableOutgoingBps;
+    state.transfer.telemetry.candidateType = candidateType;
+    state.transfer.telemetry.path = candidateType === "relay" ? "relay" : candidateType === "unknown" ? "unknown" : "direct";
+    applyFlowControlProfile();
+  } catch {
+    // Stats support varies by browser; telemetry is best-effort.
+  }
+}
+
+function sampleTransferTelemetry() {
+  const nowTs = Date.now();
+  const telemetry = state.transfer.telemetry;
+  const bytesDone = currentTransferBytesDone();
+  const elapsedMs = telemetry.startedAt ? Math.max(1, nowTs - telemetry.startedAt) : 0;
+
+  if (!telemetry.startedAt && (state.transfer.running || state.transfer.status === "receiving")) {
+    telemetry.startedAt = nowTs;
+  }
+
+  if (telemetry.lastSampleAt) {
+    const deltaMs = Math.max(1, nowTs - telemetry.lastSampleAt);
+    const deltaBytes = Math.max(0, bytesDone - telemetry.lastBytesDone);
+    telemetry.currentBps = (deltaBytes * 1000) / deltaMs;
+  }
+
+  telemetry.averageBps = elapsedMs ? (bytesDone * 1000) / elapsedMs : 0;
+  telemetry.lastSampleAt = nowTs;
+  telemetry.lastBytesDone = bytesDone;
+  telemetry.bufferedAmount = state.rtc.dc?.bufferedAmount || 0;
+  void samplePeerStats();
+  scheduleTransferRender();
+}
+
+function startTelemetry() {
+  if (state.transfer.telemetryTimer) {
+    return;
+  }
+  state.transfer.telemetry.startedAt = state.transfer.telemetry.startedAt || Date.now();
+  state.transfer.telemetry.lastSampleAt = Date.now();
+  state.transfer.telemetry.lastBytesDone = currentTransferBytesDone();
+  state.transfer.telemetryTimer = setInterval(sampleTransferTelemetry, TELEMETRY_INTERVAL_MS);
+}
+
+function stopTelemetry() {
+  if (!state.transfer.telemetryTimer) {
+    return;
+  }
+  clearInterval(state.transfer.telemetryTimer);
+  state.transfer.telemetryTimer = null;
+}
+
 function sendControl(payload) {
   if (!dataChannelReady()) {
     throw new Error("datachannel_not_ready");
@@ -1170,7 +1356,7 @@ async function waitForBufferedLowWatermark() {
   if (!dc) {
     throw new Error("datachannel_closed");
   }
-  if (dc.bufferedAmount <= MAX_BUFFERED_BYTES) {
+  if (dc.bufferedAmount <= state.transfer.maxBufferedBytes) {
     return;
   }
   await new Promise((resolve) => {
@@ -1203,6 +1389,8 @@ function buildOutgoingPlan(files, chunkSize) {
     size: file.size,
     type: file.type || "application/octet-stream",
     sha256: null,
+    hashState: createSha256State(),
+    hashFinalized: false,
     totalChunks: Math.ceil(file.size / chunkSize),
     sentBytes: 0,
     nextChunkIndex: 0,
@@ -1217,31 +1405,93 @@ function buildOutgoingPlan(files, chunkSize) {
   };
 }
 
-async function prepareOutgoingHashes() {
-  state.transfer.status = "hashing";
-  scheduleTransferRender();
+function chooseTransferChunkSize() {
+  const raw = els.chunkSize.value;
+  if (raw === "auto") {
+    state.transfer.adaptiveChunkSize = true;
+    return AUTO_CHUNK_SIZE;
+  }
 
-  for (const fileRecord of state.transfer.outgoing) {
-    try {
-      fileRecord.status = "hashing";
-      fileRecord.error = null;
-      fileRecord.sentBytes = 0;
-      scheduleTransferRender();
-      fileRecord.sha256 = await sha256HexFromBlob(fileRecord.file, (processedBytes) => {
-        fileRecord.sentBytes = processedBytes;
-        scheduleTransferRender();
-      });
-      fileRecord.sentBytes = fileRecord.size;
-      fileRecord.nextChunkIndex = 0;
-      fileRecord.beginSent = false;
-      fileRecord.status = "ready";
-      scheduleTransferRender();
-    } catch (error) {
-      fileRecord.status = "failed";
-      fileRecord.error = normalizeHashReadError(error);
-      scheduleTransferRender();
-      throw new Error(fileRecord.error);
+  const parsed = Number(raw || DEFAULT_CHUNK_SIZE);
+  state.transfer.adaptiveChunkSize = false;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CHUNK_SIZE;
+}
+
+function updateOutgoingHash(fileRecord, payload) {
+  if (fileRecord.hashFinalized) {
+    return;
+  }
+  updateSha256State(fileRecord.hashState, new Uint8Array(payload));
+}
+
+function finalizeOutgoingHash(fileRecord) {
+  if (!fileRecord.hashFinalized) {
+    fileRecord.sha256 = finalizeSha256State(fileRecord.hashState);
+    fileRecord.hashFinalized = true;
+  }
+  return fileRecord.sha256;
+}
+
+function sanitizeFilename(name) {
+  return String(name || "download.bin").replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").slice(0, 180) || "download.bin";
+}
+
+function supportsSaveDirectory() {
+  return typeof window.showDirectoryPicker === "function";
+}
+
+async function chooseSaveDirectory() {
+  if (!supportsSaveDirectory()) {
+    showStatusBanner("Save folder selection is not supported in this browser. Incoming files will stay in browser memory.", "muted", false);
+    return;
+  }
+
+  try {
+    state.transfer.saveDirectoryHandle = await window.showDirectoryPicker({ mode: "readwrite" });
+    els.saveDirLabel.textContent = "Incoming files will stream directly to the selected folder.";
+    log("Save folder selected");
+  } catch (error) {
+    if (error?.name !== "AbortError") {
+      showStatusBanner("Could not select save folder. Incoming files will stay in browser memory.", "bad", false);
     }
+  }
+}
+
+async function openIncomingWriter(fileRecord) {
+  if (fileRecord.writer || !state.transfer.saveDirectoryHandle) {
+    return;
+  }
+
+  try {
+    const handle = await state.transfer.saveDirectoryHandle.getFileHandle(sanitizeFilename(fileRecord.name), { create: true });
+    fileRecord.writer = await handle.createWritable({ keepExistingData: false });
+    fileRecord.storage = "disk";
+    fileRecord.fileHandle = handle;
+  } catch (error) {
+    fileRecord.storage = "memory";
+    fileRecord.writer = null;
+    log("Falling back to memory receive", { file: fileRecord.name, message: error.message });
+  }
+}
+
+async function closeIncomingWriter(fileRecord) {
+  if (!fileRecord.writer) {
+    return;
+  }
+  await fileRecord.writer.close();
+  fileRecord.writer = null;
+}
+
+function queueIncomingHash(fileRecord, chunkIndex, payload) {
+  if (fileRecord.hashFinalized) {
+    return;
+  }
+  fileRecord.pendingHashChunks.set(chunkIndex, payload);
+  while (fileRecord.pendingHashChunks.has(fileRecord.nextHashChunkIndex)) {
+    const nextPayload = fileRecord.pendingHashChunks.get(fileRecord.nextHashChunkIndex);
+    fileRecord.pendingHashChunks.delete(fileRecord.nextHashChunkIndex);
+    updateSha256State(fileRecord.hashState, new Uint8Array(nextPayload));
+    fileRecord.nextHashChunkIndex += 1;
   }
 }
 
@@ -1265,16 +1515,21 @@ async function sendChunk(fileRecord, chunkIndex, trackProgress = true) {
     try {
       state.rtc.dc.send(encodeChunkFrame(fileRecord.id, chunkIndex, payload));
       const sent = end - start;
+      if (trackProgress) {
+        updateOutgoingHash(fileRecord, payload);
+      }
       fileRecord.sentBytes = Math.max(fileRecord.sentBytes, end);
       if (trackProgress) {
         state.transfer.outgoingSentBytes = Math.min(state.transfer.outgoingTotalBytes, state.transfer.outgoingSentBytes + sent);
       }
+      state.transfer.telemetry.chunksSent += 1;
       scheduleTransferRender();
       return;
     } catch (error) {
       if (attempt === MAX_CHUNK_SEND_RETRIES) {
         throw error;
       }
+      state.transfer.telemetry.retries += 1;
       await sleep(250 + attempt * 250);
     }
   }
@@ -1322,7 +1577,7 @@ async function resendMissingChunks(fileId, missingIndexes = []) {
     }
     await sendChunk(fileRecord, idx, false);
   }
-  sendControl({ type: "file_complete", transferId: state.transfer.transferId, fileId });
+  sendControl({ type: "file_complete", transferId: state.transfer.transferId, fileId, sha256: fileRecord.sha256 });
   fileRecord.status = "awaiting_verify";
   renderTransfer();
 }
@@ -1339,7 +1594,6 @@ async function sendFile(fileRecord) {
       name: fileRecord.name,
       size: fileRecord.size,
       mimeType: fileRecord.type,
-      sha256: fileRecord.sha256,
       totalChunks: fileRecord.totalChunks,
       chunkSize: state.transfer.chunkSize
     });
@@ -1356,10 +1610,11 @@ async function sendFile(fileRecord) {
     state.transfer.currentChunkIndex = fileRecord.nextChunkIndex;
   }
 
+  const sha256 = finalizeOutgoingHash(fileRecord);
   const ackPromise = waitForFileAck(fileRecord);
   fileRecord.status = "awaiting_verify";
   state.transfer.currentChunkIndex = fileRecord.totalChunks;
-  sendControl({ type: "file_complete", transferId: state.transfer.transferId, fileId: fileRecord.id });
+  sendControl({ type: "file_complete", transferId: state.transfer.transferId, fileId: fileRecord.id, sha256 });
   scheduleTransferRender();
 
   await ackPromise;
@@ -1384,6 +1639,7 @@ async function runOutgoingTransfer() {
 
   state.transfer.running = true;
   state.transfer.status = "transferring";
+  startTelemetry();
   scheduleTransferRender();
 
   try {
@@ -1400,6 +1656,9 @@ async function runOutgoingTransfer() {
 
     sendControl({ type: "transfer_complete", transferId: state.transfer.transferId });
     state.transfer.status = "completed";
+    state.transfer.telemetry.completedAt = Date.now();
+    sampleTransferTelemetry();
+    stopTelemetry();
     log("Transfer completed", { transferId: state.transfer.transferId });
   } catch (error) {
     if (error?.message === "datachannel_not_open" || error?.message?.includes("readyState is not 'open'")) {
@@ -1414,6 +1673,7 @@ async function runOutgoingTransfer() {
       });
     } else {
       state.transfer.status = state.transfer.cancelled ? "cancelled" : "failed";
+      stopTelemetry();
       log("Transfer failed", { message: error.message });
     }
   } finally {
@@ -1430,12 +1690,20 @@ function setIncomingTransfer(payload) {
       name: file.name,
       size: file.size,
       mimeType: file.mimeType || "application/octet-stream",
-      sha256: file.sha256,
+      sha256: file.sha256 || null,
+      hashState: createSha256State(),
+      hashFinalized: false,
+      nextHashChunkIndex: 0,
+      pendingHashChunks: new Map(),
       totalChunks: file.totalChunks,
       chunkSize: payload.chunkSize,
       receivedBytes: 0,
       chunks: new Array(file.totalChunks),
+      receivedChunkBitmap: new Uint8Array(file.totalChunks),
       status: "queued",
+      storage: state.transfer.saveDirectoryHandle ? "disk" : "memory",
+      writer: null,
+      fileHandle: null,
       downloadUrl: null,
       hash: null,
       error: null
@@ -1453,13 +1721,15 @@ function setIncomingTransfer(payload) {
   };
 
   state.transfer.status = "receiving";
+  resetTelemetry();
+  startTelemetry();
   renderTransfer();
 }
 
 async function verifyIncomingFile(fileRecord) {
   const missing = [];
   for (let idx = 0; idx < fileRecord.totalChunks; idx += 1) {
-    if (!fileRecord.chunks[idx]) {
+    if (!fileRecord.receivedChunkBitmap[idx]) {
       missing.push(idx);
     }
   }
@@ -1476,8 +1746,21 @@ async function verifyIncomingFile(fileRecord) {
     return;
   }
 
-  const blob = new Blob(fileRecord.chunks, { type: fileRecord.mimeType });
-  const digest = await sha256HexFromBlob(blob);
+  if (!fileRecord.sha256 || fileRecord.nextHashChunkIndex !== fileRecord.totalChunks) {
+    fileRecord.status = "retry_requested";
+    renderTransfer();
+    sendControl({
+      type: "chunk_nack",
+      transferId: state.transfer.incoming.transferId,
+      fileId: fileRecord.id,
+      missing: []
+    });
+    return;
+  }
+
+  await closeIncomingWriter(fileRecord);
+  const digest = fileRecord.hashFinalized ? fileRecord.hash : finalizeSha256State(fileRecord.hashState);
+  fileRecord.hashFinalized = true;
   fileRecord.hash = digest;
 
   if (digest !== fileRecord.sha256) {
@@ -1494,7 +1777,10 @@ async function verifyIncomingFile(fileRecord) {
     return;
   }
 
-  fileRecord.downloadUrl = URL.createObjectURL(blob);
+  if (fileRecord.storage === "memory") {
+    const blob = new Blob(fileRecord.chunks, { type: fileRecord.mimeType });
+    fileRecord.downloadUrl = URL.createObjectURL(blob);
+  }
   fileRecord.chunks = [];
   fileRecord.status = "verified";
   renderTransfer();
@@ -1520,15 +1806,31 @@ async function handleIncomingChunk(buffer) {
     return;
   }
 
-  if (!fileRecord.chunks[frame.chunkIndex]) {
+  if (!fileRecord.receivedChunkBitmap[frame.chunkIndex]) {
     const payloadCopy = frame.payload.slice(0);
-    fileRecord.chunks[frame.chunkIndex] = payloadCopy;
+    fileRecord.receivedChunkBitmap[frame.chunkIndex] = 1;
+    queueIncomingHash(fileRecord, frame.chunkIndex, payloadCopy);
+    if (fileRecord.storage === "disk") {
+      await openIncomingWriter(fileRecord);
+    }
+    if (fileRecord.writer) {
+      await fileRecord.writer.write({
+        type: "write",
+        position: frame.chunkIndex * fileRecord.chunkSize,
+        data: payloadCopy
+      });
+      state.transfer.telemetry.diskWrites += 1;
+    } else {
+      fileRecord.storage = "memory";
+      fileRecord.chunks[frame.chunkIndex] = payloadCopy;
+    }
     fileRecord.receivedBytes += payloadCopy.byteLength;
     state.transfer.incoming.receivedBytes += payloadCopy.byteLength;
+    state.transfer.telemetry.chunksReceived += 1;
     if (fileRecord.status === "queued" || fileRecord.status === "receiving_meta") {
       fileRecord.status = "receiving";
     }
-    renderTransfer();
+    scheduleTransferRender();
   }
 }
 
@@ -1580,6 +1882,7 @@ async function handleDataControlMessage(message) {
     case "transfer_cancel": {
       state.transfer.status = "cancelled";
       state.transfer.cancelled = true;
+      stopTelemetry();
       renderTransfer();
       break;
     }
@@ -1604,6 +1907,9 @@ async function handleDataControlMessage(message) {
       const fileRecord = state.transfer.incoming.files.get(message.fileId);
       if (!fileRecord) {
         return;
+      }
+      if (message.sha256) {
+        fileRecord.sha256 = message.sha256;
       }
       fileRecord.status = "verifying";
       renderTransfer();
@@ -1656,6 +1962,9 @@ async function handleDataControlMessage(message) {
     case "transfer_complete": {
       if (state.session.role === "receiver") {
         state.transfer.status = "completed";
+        state.transfer.telemetry.completedAt = Date.now();
+        sampleTransferTelemetry();
+        stopTelemetry();
         renderTransfer();
       }
       break;
@@ -1902,16 +2211,42 @@ function makeFileItem(file, incoming = false) {
 
   const status = file.error ? `${file.status} (${file.error})` : file.status;
   const statusTag = String(file.status || "idle").replace(/_/g, " ");
+  const storageLabel = incoming && file.storage === "disk" ? "saved to folder" : "";
 
-  li.innerHTML = `
-    <div class="file-item-head">
-      <span class="file-name">${file.name}</span>
-      <span>${progressPct}</span>
-    </div>
-    <div class="tiny">${formatBytes(file.receivedBytes || file.sentBytes || 0)} / ${formatBytes(file.size)}</div>
-    <div class="progress-track"><div class="progress-bar" style="width:${Math.min(progress * 100, 100)}%"></div></div>
-    <div class="tiny"><span class="status-pill status-pill-${normalizeStatusClass(file.status)}">${statusTag}</span> ${status}</div>
-  `;
+  const head = document.createElement("div");
+  head.className = "file-item-head";
+
+  const name = document.createElement("span");
+  name.className = "file-name";
+  name.textContent = file.name;
+  head.appendChild(name);
+
+  const pct = document.createElement("span");
+  pct.textContent = progressPct;
+  head.appendChild(pct);
+  li.appendChild(head);
+
+  const bytes = document.createElement("div");
+  bytes.className = "tiny";
+  bytes.textContent = `${formatBytes(file.receivedBytes || file.sentBytes || 0)} / ${formatBytes(file.size)}`;
+  li.appendChild(bytes);
+
+  const progressTrack = document.createElement("div");
+  progressTrack.className = "progress-track";
+  const progressBar = document.createElement("div");
+  progressBar.className = "progress-bar";
+  progressBar.style.width = `${Math.min(progress * 100, 100)}%`;
+  progressTrack.appendChild(progressBar);
+  li.appendChild(progressTrack);
+
+  const statusLine = document.createElement("div");
+  statusLine.className = "tiny";
+  const pill = document.createElement("span");
+  pill.className = `status-pill status-pill-${normalizeStatusClass(file.status)}`;
+  pill.textContent = statusTag;
+  statusLine.appendChild(pill);
+  statusLine.append(` ${status}${storageLabel ? ` · ${storageLabel}` : ""}`);
+  li.appendChild(statusLine);
 
   if (incoming && file.downloadUrl && file.status === "verified") {
     const actions = document.createElement("div");
@@ -1923,6 +2258,14 @@ function makeFileItem(file, incoming = false) {
     link.textContent = "Download";
     actions.appendChild(link);
 
+    li.appendChild(actions);
+  } else if (incoming && file.storage === "disk" && file.status === "verified") {
+    const actions = document.createElement("div");
+    actions.className = "file-actions";
+    const saved = document.createElement("span");
+    saved.className = "tiny";
+    saved.textContent = "Saved to selected folder";
+    actions.appendChild(saved);
     li.appendChild(actions);
   }
 
@@ -1954,6 +2297,32 @@ function renderTransfer() {
   els.overallProgressBar.style.width = `${Math.min(progress, 100)}%`;
   els.overallProgressLabel.textContent = formatPercent(progress);
   els.overallBytes.textContent = `${formatBytes(done)} / ${formatBytes(total === 1 && done === 0 ? 0 : total)}`;
+
+  const telemetry = state.transfer.telemetry;
+  if (els.telemetrySpeed) {
+    const average = telemetry.averageBps ? ` avg ${formatRate(telemetry.averageBps)}` : "";
+    els.telemetrySpeed.textContent = `${formatRate(telemetry.currentBps)}${average}`;
+  }
+  if (els.telemetryRtt) {
+    els.telemetryRtt.textContent = telemetry.rttMs === null ? "-" : `${telemetry.rttMs} ms`;
+  }
+  if (els.telemetryPath) {
+    els.telemetryPath.textContent = telemetry.path === "unknown" ? "-" : telemetry.path;
+  }
+  if (els.telemetryBuffer) {
+    els.telemetryBuffer.textContent = dataChannelReady()
+      ? `${formatBytes(telemetry.bufferedAmount || state.rtc.dc.bufferedAmount)} / ${formatBytes(state.transfer.maxBufferedBytes)}`
+      : "-";
+  }
+  if (els.saveDirLabel) {
+    if (!supportsSaveDirectory()) {
+      els.saveDirLabel.textContent = "Save folder selection is not supported in this browser.";
+    } else if (state.transfer.saveDirectoryHandle) {
+      els.saveDirLabel.textContent = "Incoming files will stream directly to the selected folder.";
+    } else {
+      els.saveDirLabel.textContent = "Files are kept in browser memory unless a save folder is selected.";
+    }
+  }
 
   els.outgoingList.replaceChildren(...state.transfer.outgoing.map((file) => makeFileItem(file)));
 
@@ -2071,7 +2440,7 @@ async function onStartTransfer() {
 
   resetTransferState();
 
-  state.transfer.chunkSize = Number(els.chunkSize.value || DEFAULT_CHUNK_SIZE);
+  state.transfer.chunkSize = chooseTransferChunkSize();
   if (state.transfer.chunkSize > 64 * 1024) {
     log("Large chunks may destabilize long transfers. Recommended: 16-64 KB for multi-GB files.");
   }
@@ -2080,20 +2449,20 @@ async function onStartTransfer() {
   state.transfer.outgoingTotalBytes = plan.totalBytes;
   state.transfer.transferId = randomId();
   state.transfer.status = "preparing";
+  resetTelemetry();
   renderTransfer();
 
   try {
-    await prepareOutgoingHashes();
     sendControl({
       type: "transfer_offer",
       transferId: state.transfer.transferId,
       chunkSize: state.transfer.chunkSize,
+      streamingHash: true,
       files: state.transfer.outgoing.map((file) => ({
         id: file.id,
         name: file.name,
         size: file.size,
         mimeType: file.type,
-        sha256: file.sha256,
         totalChunks: file.totalChunks
       }))
     });
@@ -2140,6 +2509,7 @@ function onResumeTransfer() {
 function onCancelTransfer() {
   state.transfer.cancelled = true;
   state.transfer.status = "cancelled";
+  stopTelemetry();
   try {
     sendControl({ type: "transfer_cancel", transferId: state.transfer.transferId });
   } catch {
@@ -2270,6 +2640,9 @@ function wireEvents() {
   els.pauseTransfer.addEventListener("click", onPauseTransfer);
   els.resumeTransfer.addEventListener("click", onResumeTransfer);
   els.cancelTransfer.addEventListener("click", onCancelTransfer);
+  els.chooseSaveDir?.addEventListener("click", () => {
+    void chooseSaveDirectory();
+  });
 
   els.clearLog.addEventListener("click", () => {
     els.logOutput.textContent = "";

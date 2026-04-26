@@ -199,8 +199,9 @@
               <div class="input-row">
                 <label for="chunk-size">Chunk size</label>
                 <select id="chunk-size">
+                  <option value="auto" selected>Auto (adaptive)</option>
                   <option value="16384">16 KB (max stability)</option>
-                  <option value="32768" selected>32 KB (recommended)</option>
+                  <option value="32768">32 KB (balanced)</option>
                   <option value="65536">64 KB</option>
                   <option value="131072">128 KB</option>
                   <option value="262144">256 KB</option>
@@ -216,6 +217,10 @@
             </div>
 
             <div id="receiver-transfer" class="stack hidden">
+              <div class="input-row">
+                <p id="save-dir-label" class="hint">Files are kept in browser memory unless a save folder is selected.</p>
+                <button id="choose-save-dir" class="ghost" type="button">Choose save folder</button>
+              </div>
               <p class="hint">Await sender initiation. Files appear after hash verification completes.</p>
             </div>
 
@@ -226,6 +231,25 @@
               </div>
               <div class="progress-track"><div id="overall-progress-bar" class="progress-bar"></div></div>
               <p id="overall-bytes" class="hint">0 B / 0 B</p>
+            </div>
+
+            <div class="telemetry-grid">
+              <div>
+                <p class="k">Speed</p>
+                <p id="telemetry-speed">-</p>
+              </div>
+              <div>
+                <p class="k">RTT</p>
+                <p id="telemetry-rtt">-</p>
+              </div>
+              <div>
+                <p class="k">Path</p>
+                <p id="telemetry-path">-</p>
+              </div>
+              <div>
+                <p class="k">Buffer</p>
+                <p id="telemetry-buffer">-</p>
+              </div>
             </div>
 
             <div class="files-grid">

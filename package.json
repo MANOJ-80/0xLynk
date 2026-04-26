@@ -9,6 +9,8 @@
     "start:signaling": "npm --workspace @0xlynk/signaling-server run dev",
     "start:signaling:prod": "npm --workspace @0xlynk/signaling-server run start",
     "test:smoke": "node scripts/smoke-signaling.cjs",
+    "test:browser-transfer": "node scripts/smoke-browser-transfer.mjs",
+    "benchmark:transfer": "node scripts/benchmark-transfer-model.cjs",
     "showcase:capture": "node scripts/capture-showcase.mjs",
     "docker:up": "docker compose up --build",
     "docker:up:detached": "docker compose up -d --build",

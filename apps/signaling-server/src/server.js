@@ -18,6 +18,7 @@ const MAX_SIGNAL_MESSAGE_BYTES = Number(process.env.MAX_SIGNAL_MESSAGE_BYTES || 
 const MAX_PASSPHRASE_LENGTH = Number(process.env.MAX_PASSPHRASE_LENGTH || 128);
 const MAX_JOIN_AUTH_USERNAME_LENGTH = Number(process.env.MAX_JOIN_AUTH_USERNAME_LENGTH || 64);
 const MAX_JOIN_AUTH_PASSWORD_LENGTH = Number(process.env.MAX_JOIN_AUTH_PASSWORD_LENGTH || 128);
+const WS_HEARTBEAT_INTERVAL_MS = Number(process.env.WS_HEARTBEAT_INTERVAL_MS || 30 * 1000);
 const ICE_SERVERS_JSON = process.env.ICE_SERVERS_JSON || "";
 const TURN_URLS = process.env.TURN_URLS || "";
 const TURN_USERNAME = process.env.TURN_USERNAME || "";
@@ -105,11 +106,19 @@ function normalizePassphrase(raw) {
   return passphrase;
 }
 
-function hashPassphrase(passphrase, salt) {
-  return crypto.scryptSync(passphrase, salt, 64).toString("base64url");
+function hashPassphraseAsync(passphrase, salt) {
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(passphrase, salt, 64, (error, key) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(key.toString("base64url"));
+    });
+  });
 }
 
-function createPassphraseRecord(passphrase) {
+async function createPassphraseRecordAsync(passphrase) {
   if (!passphrase) {
     return {
       passphraseSalt: null,
@@ -118,7 +127,7 @@ function createPassphraseRecord(passphrase) {
   }
 
   const passphraseSalt = crypto.randomBytes(16).toString("base64url");
-  const passphraseHash = hashPassphrase(passphrase, passphraseSalt);
+  const passphraseHash = await hashPassphraseAsync(passphrase, passphraseSalt);
   return {
     passphraseSalt,
     passphraseHash
@@ -150,7 +159,7 @@ function normalizeJoinAuth(rawJoinAuth) {
   };
 }
 
-function createJoinAuthRecord(joinAuth) {
+async function createJoinAuthRecordAsync(joinAuth) {
   if (!joinAuth.username || !joinAuth.password) {
     return {
       joinAuthUsername: null,
@@ -160,7 +169,7 @@ function createJoinAuthRecord(joinAuth) {
   }
 
   const joinAuthPasswordSalt = crypto.randomBytes(16).toString("base64url");
-  const joinAuthPasswordHash = hashPassphrase(joinAuth.password, joinAuthPasswordSalt);
+  const joinAuthPasswordHash = await hashPassphraseAsync(joinAuth.password, joinAuthPasswordSalt);
   return {
     joinAuthUsername: joinAuth.username,
     joinAuthPasswordSalt,
@@ -168,7 +177,7 @@ function createJoinAuthRecord(joinAuth) {
   };
 }
 
-function verifyJoinAuth(session, rawJoinAuth) {
+async function verifyJoinAuth(session, rawJoinAuth) {
   if (!session.joinAuthUsername || !session.joinAuthPasswordSalt || !session.joinAuthPasswordHash) {
     return true;
   }
@@ -184,7 +193,7 @@ function verifyJoinAuth(session, rawJoinAuth) {
     return false;
   }
 
-  const providedHash = hashPassphrase(joinAuth.password, session.joinAuthPasswordSalt);
+  const providedHash = await hashPassphraseAsync(joinAuth.password, session.joinAuthPasswordSalt);
   const left = Buffer.from(providedHash);
   const right = Buffer.from(session.joinAuthPasswordHash);
   if (left.length !== right.length) {
@@ -193,12 +202,12 @@ function verifyJoinAuth(session, rawJoinAuth) {
   return crypto.timingSafeEqual(left, right);
 }
 
-function verifyPassphrase(session, passphrase) {
+async function verifyPassphrase(session, passphrase) {
   if (!session.passphraseHash || !session.passphraseSalt) {
     return true;
   }
 
-  const providedHash = hashPassphrase(passphrase, session.passphraseSalt);
+  const providedHash = await hashPassphraseAsync(passphrase, session.passphraseSalt);
   const left = Buffer.from(providedHash);
   const right = Buffer.from(session.passphraseHash);
   if (left.length !== right.length) {
@@ -222,6 +231,8 @@ function createClient(ws, req) {
     id,
     ip,
     ws,
+    isAlive: true,
+    messageQueue: Promise.resolve(),
     sessionCode: null,
     role: null,
     token: null
@@ -355,7 +366,7 @@ function handleDisconnect(client, reason = "peer_disconnected") {
   detachClient(client);
 }
 
-function handleCreateSession(client, rawPassphrase, rawJoinAuth) {
+async function handleCreateSession(client, rawPassphrase, rawJoinAuth) {
   if (client.sessionCode) {
     fail(client, "already_in_session", "Leave current session before creating a new one.");
     return;
@@ -371,7 +382,7 @@ function handleCreateSession(client, rawPassphrase, rawJoinAuth) {
     return;
   }
 
-  const passphraseRecord = createPassphraseRecord(passphrase);
+  const passphraseRecord = await createPassphraseRecordAsync(passphrase);
   let joinAuth;
   try {
     joinAuth = normalizeJoinAuth(rawJoinAuth);
@@ -383,7 +394,7 @@ function handleCreateSession(client, rawPassphrase, rawJoinAuth) {
     );
     return;
   }
-  const joinAuthRecord = createJoinAuthRecord(joinAuth);
+  const joinAuthRecord = await createJoinAuthRecordAsync(joinAuth);
   const session = {
     code,
     createdAt: now(),
@@ -427,7 +438,7 @@ function handleCreateSession(client, rawPassphrase, rawJoinAuth) {
   });
 }
 
-function handleJoinSession(client, rawCode, rawPassphrase, rawJoinAuth) {
+async function handleJoinSession(client, rawCode, rawPassphrase, rawJoinAuth) {
   if (!enforceJoinRateLimit(client)) {
     fail(client, "rate_limited", "Too many join attempts. Try again shortly.");
     return;
@@ -470,7 +481,7 @@ function handleJoinSession(client, rawCode, rawPassphrase, rawJoinAuth) {
     return;
   }
 
-  if (!verifyPassphrase(session, passphrase)) {
+  if (!(await verifyPassphrase(session, passphrase))) {
     fail(client, "invalid_passphrase", "Room passphrase is incorrect.");
     return;
   }
@@ -484,7 +495,7 @@ function handleJoinSession(client, rawCode, rawPassphrase, rawJoinAuth) {
     return;
   }
 
-  if (!verifyJoinAuth(session, joinAuth)) {
+  if (!(await verifyJoinAuth(session, joinAuth))) {
     fail(client, "invalid_join_auth", "Room username/password is incorrect.");
     return;
   }
@@ -638,7 +649,7 @@ function handleLeaveSession(client) {
   closeSession(session, "client_left");
 }
 
-function handleMessage(client, raw) {
+async function handleMessage(client, raw) {
   let message;
   try {
     message = JSON.parse(raw.toString());
@@ -649,10 +660,10 @@ function handleMessage(client, raw) {
 
   switch (message.type) {
     case "create_session":
-      handleCreateSession(client, message.passphrase, message.joinAuth);
+      await handleCreateSession(client, message.passphrase, message.joinAuth);
       break;
     case "join_session":
-      handleJoinSession(client, message.code, message.passphrase, message.joinAuth);
+      await handleJoinSession(client, message.code, message.passphrase, message.joinAuth);
       break;
     case "reconnect_session":
       handleReconnectSession(client, message);
@@ -704,6 +715,12 @@ function runCleanup() {
 
     if (senderTimedOut || receiverTimedOut) {
       closeSession(session, "reconnect_timeout");
+    }
+  });
+
+  joinAttempts.forEach((record, ip) => {
+    if (current - record.windowStart >= 2 * 60_000) {
+      joinAttempts.delete(ip);
     }
   });
 }
@@ -808,7 +825,17 @@ wss.on("connection", (ws, req) => {
       fail(client, "message_too_large", "Message exceeds max allowed size.");
       return;
     }
-    handleMessage(client, raw);
+    client.messageQueue = client.messageQueue
+      .then(() => handleMessage(client, raw))
+      .catch((error) => {
+        markError("internal_error");
+        console.error("[0xLynk] message handler failed", error);
+        fail(client, "internal_error", "Message could not be processed.");
+      });
+  });
+
+  ws.on("pong", () => {
+    client.isAlive = true;
   });
 
   ws.on("close", () => {
@@ -818,6 +845,24 @@ wss.on("connection", (ws, req) => {
 });
 
 setInterval(runCleanup, CLEANUP_INTERVAL_MS);
+
+const heartbeatTimer = setInterval(() => {
+  clients.forEach((client) => {
+    if (client.ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    if (!client.isAlive) {
+      client.ws.terminate();
+      return;
+    }
+    client.isAlive = false;
+    client.ws.ping();
+  });
+}, WS_HEARTBEAT_INTERVAL_MS);
+
+wss.on("close", () => {
+  clearInterval(heartbeatTimer);
+});
 
 server.listen(PORT, () => {
   console.log(`[0xLynk] server listening on :${PORT}`);
