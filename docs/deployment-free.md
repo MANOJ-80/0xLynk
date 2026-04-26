@@ -1,23 +1,23 @@
 # Free Deployment Guide
 
-This guide covers two zero-cost deployment modes for 0xLynk.
+This guide covers zero-cost deployment options for 0xLynk.
 
-## 1) Instant Public Demo URL (from your local machine)
+## Option 1: Temporary public demo URL (local machine)
 
-Use this for quick sharing, interviews, and demos.
+Best for interviews, quick stakeholder review, and short-lived demos.
 
 ```bash
 npm install
 npm run demo:share
 ```
 
-What happens:
+What this does:
 
-- `app` service runs on Docker.
-- `cloudflared` creates a temporary public URL.
-- Tunnel logs print a URL like `https://<random>.trycloudflare.com`.
+- Starts app container (`app`) via Docker Compose.
+- Starts `cloudflared` sidecar.
+- Exposes app through a temporary `https://<random>.trycloudflare.com` URL.
 
-Stop:
+Stop demo stack:
 
 ```bash
 npm run demo:down
@@ -25,50 +25,64 @@ npm run demo:down
 
 Limitations:
 
-- URL is temporary and changes each run.
-- Availability depends on your laptop and network.
+- URL rotates on every run.
+- Availability depends on your machine and network uptime.
+- Not intended for permanent production use.
 
-## 2) Always-Free VM Deployment (recommended for persistent demo)
+## Option 2: Persistent always-free VM deployment
 
-Use an always-free VPS (e.g., Oracle Cloud Always Free).
+Use an always-free VPS tier (for example Oracle Cloud Always Free).
 
 ### Steps
 
-1. Install Docker and Compose plugin on VM.
-2. Clone repository.
-3. Configure env:
+1. Install Docker + Compose plugin on VM.
+2. Clone this repository.
+3. Configure environment:
 
 ```bash
 cp .env.example .env
 ```
 
-4. Start service:
+4. Start app:
 
 ```bash
 npm run docker:up:detached
 ```
 
-5. Verify health:
+5. Verify:
 
 ```bash
 curl http://localhost:8080/health
 ```
 
-6. Expose with HTTPS via reverse proxy (Caddy/Nginx) and DNS.
+6. Put HTTPS reverse proxy in front (Caddy/Nginx) + attach domain DNS.
 
-## TURN (for stricter networks)
+## Option 3: Render free-plan deployment
 
-WebRTC file transfer can fail in some NAT/corporate networks without TURN.
+This repo includes `render.yaml` for Render Blueprint deploy.
 
-Set these in `.env` when you have TURN server details:
+1. Push repo to GitHub.
+2. In Render: `New +` -> `Blueprint`.
+3. Select repository and deploy.
+4. Open generated `*.onrender.com` URL after first successful deploy.
 
-- `TURN_URLS`
-- `TURN_USERNAME`
-- `TURN_CREDENTIAL`
+Free-plan notes:
 
-If you already have full ICE config JSON, use `ICE_SERVERS_JSON` instead.
+- Service can sleep on inactivity (cold starts expected).
+- Large transfers are more stable when service is warm.
 
-## Suggested demo defaults
+## TURN guidance (important)
 
-- Keep `SESSION_TTL_MS=10800000` (3 hours) for long transfers.
-- Keep chunk size at `32 KB` in UI for good speed/stability balance.
+Some strict NAT/corporate networks require TURN relay for reliable connectivity.
+
+Set one of:
+
+- `ICE_SERVERS_JSON` (full override), or
+- `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL`.
+
+Without TURN, peers behind restrictive networks may fail to establish transfer channels.
+
+## Recommended runtime values for demos
+
+- `SESSION_TTL_MS=10800000` (3 hours) for long sessions.
+- Chunk size in UI: `Auto` (adaptive) or `32 KB` for stable general use.

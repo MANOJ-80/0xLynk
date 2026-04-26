@@ -32,7 +32,17 @@ All messages are JSON over WebSocket.
 - `session_expired`: `{ type, code }`
 - `pong`: `{ type, ts }`
 - `error`: `{ type, code, message }`
-  - additional relevant codes: `invalid_passphrase`, `join_auth_required`, `invalid_join_auth`
+  - common codes include:
+    - `invalid_passphrase`
+    - `join_auth_required`
+    - `invalid_join_auth`
+    - `session_not_found`
+    - `session_full`
+    - `rate_limited`
+    - `invalid_room_code`
+    - `invalid_reconnect_token`
+    - `role_already_connected`
+    - `message_too_large`
 
 ## Rules
 
@@ -61,6 +71,16 @@ Control messages are JSON sent over the DataChannel with `channel: "control"`.
 - `chunk_nack`: receiver requests resend for missing chunks.
 - `file_verified`: receiver returns SHA-256 verification result.
 - `transfer_complete`: sender indicates all files completed.
+
+Current flow detail:
+
+- Sender sends `transfer_offer` with `transferId`, `chunkSize`, and file descriptors.
+- Receiver accepts using `transfer_accept`.
+- Sender streams chunk frames and emits `file_complete` with SHA-256 digest.
+- Receiver either:
+  - responds with `chunk_nack` for missing pieces, or
+  - responds with `file_verified` (`ok: true|false`) after verification.
+- Sender completes with `transfer_complete` after all files are verified.
 
 Binary chunk frames are sent as ArrayBuffer with the header:
 
