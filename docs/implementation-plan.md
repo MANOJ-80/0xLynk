@@ -1,4 +1,4 @@
-# 0xShare Implementation Plan
+# 0xLynk Implementation Plan
 
 ## Delivered in this repository
 

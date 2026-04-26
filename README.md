@@ -1,8 +1,8 @@
-# 0xShare by 0xLynk
+# 0xLynk
 
-0xShare is a privacy-first browser file transfer product by 0xLynk.
+0xLynk is a privacy-first browser file transfer product.
 
-This repository includes an end-to-end MVP of 0xShare:
+This repository includes an end-to-end MVP of 0xLynk:
 
 - WebSocket signaling server for room-code pairing and SDP/ICE relay.
 - Browser client with sender/receiver modes.

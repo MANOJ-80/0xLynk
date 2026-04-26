@@ -820,5 +820,5 @@ wss.on("connection", (ws, req) => {
 setInterval(runCleanup, CLEANUP_INTERVAL_MS);
 
 server.listen(PORT, () => {
-  console.log(`[0xShare] server listening on :${PORT}`);
+  console.log(`[0xLynk] server listening on :${PORT}`);
 });

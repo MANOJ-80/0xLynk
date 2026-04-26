@@ -1,7 +1,7 @@
 services:
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: 0xshare-tunnel
+    container_name: 0xlynk-tunnel
     command: tunnel --no-autoupdate --url http://app:8080
     depends_on:
       app:

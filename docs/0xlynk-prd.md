@@ -1,8 +1,8 @@
-# 0xShare Product PRD
+# 0xLynk Product PRD
 
 ## Product Description
 
-- 0xShare is a browser-based peer-to-peer file transfer product that lets two users send files directly between devices using WebRTC DataChannels.
+- 0xLynk is a browser-based peer-to-peer file transfer product that lets two users send files directly between devices using WebRTC DataChannels.
 - A lightweight signaling server is used only for session setup (SDP/ICE exchange) and never stores or reads file content.
 - Users connect with a short room code, transfer files in chunks with progress visibility, and verify integrity after transfer.
 - The product is designed for privacy-first, install-free sharing across laptop and mobile browsers.

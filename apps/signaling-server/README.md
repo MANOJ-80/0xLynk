@@ -1,4 +1,4 @@
-# 0xShare Signaling Server
+# 0xLynk Signaling Server
 
 Lightweight WebSocket service for session pairing and WebRTC signaling.
 
@@ -29,7 +29,7 @@ See `docs/signaling-protocol.md`.
 ## Runtime behavior
 
 - `GET /health` returns service status and active session count.
-- `GET /` serves the 0xShare browser client.
+- `GET /` serves the 0xLynk browser client.
 - Room sessions expire by TTL.
 - Temporary disconnects can recover via `reconnect_session` token within grace period.
 

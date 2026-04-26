@@ -1,5 +1,5 @@
-const STORAGE_KEY = "0xshare.session.v1";
-const THEME_STORAGE_KEY = "0xshare.theme.v1";
+const STORAGE_KEY = "0xlynk.session.v1";
+const THEME_STORAGE_KEY = "0xlynk.theme.v1";
 const DEFAULT_THEME = "night";
 const THEMES = {
   night: { label: "Night", iconHref: "#icon-moon" },
@@ -2307,7 +2307,7 @@ async function boot() {
   renderAll();
   await loadServerConfig();
   connectSignaling();
-  log("0xShare client ready");
+  log("0xLynk client ready");
 }
 
 void boot();

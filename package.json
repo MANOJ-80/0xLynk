@@ -6,8 +6,8 @@
     "apps/*"
   ],
   "scripts": {
-    "start:signaling": "npm --workspace @0xshare/signaling-server run dev",
-    "start:signaling:prod": "npm --workspace @0xshare/signaling-server run start",
+    "start:signaling": "npm --workspace @0xlynk/signaling-server run dev",
+    "start:signaling:prod": "npm --workspace @0xlynk/signaling-server run start",
     "test:smoke": "node scripts/smoke-signaling.cjs",
     "showcase:capture": "node scripts/capture-showcase.mjs",
     "docker:up": "docker compose up --build",
