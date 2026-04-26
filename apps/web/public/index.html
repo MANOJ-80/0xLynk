@@ -3,38 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>0xShare | Private Browser File Transfer</title>
+    <title>0xLynk | Secure Browser File Transfer</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700;800&display=swap"
-      rel="stylesheet"
-    />
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
           extend: {
             fontFamily: {
-              sans: ["Manrope", "ui-sans-serif", "system-ui", "sans-serif"],
-              display: ["Sora", "ui-sans-serif", "system-ui", "sans-serif"],
+              sans: ["Geist", "ui-sans-serif", "system-ui", "sans-serif"],
               mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"]
-            },
-            boxShadow: {
-              luxe: "0 24px 70px rgba(18, 34, 48, 0.16)",
-              soft: "0 10px 28px rgba(15, 29, 42, 0.10)"
-            },
-            colors: {
-              brand: {
-                50: "#eef9f7",
-                100: "#d5f0ea",
-                500: "#0f8f79",
-                700: "#0c6958"
-              },
-              bronze: {
-                200: "#f4ddc7",
-                500: "#b56a34"
-              }
             }
           }
         }
@@ -45,27 +25,8 @@
   <body class="min-h-screen font-sans antialiased" data-theme="night">
     <svg width="0" height="0" class="absolute" aria-hidden="true" focusable="false">
       <defs>
-        <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#28c9aa" />
-          <stop offset="100%" stop-color="#cb7b40" />
-        </linearGradient>
         <symbol id="icon-brand" viewBox="0 0 24 24">
           <path d="M4 7.2 12 2.8l8 4.4v9.6L12 21.2 4 16.8V7.2Zm4.5 1.7v6.2L12 17l3.5-1.9V8.9L12 7 8.5 8.9Z" fill="currentColor" />
-        </symbol>
-        <symbol id="icon-mode" viewBox="0 0 24 24">
-          <path d="M4 7h16v4H4V7Zm0 6h10v4H4v-4Zm12 0h4v4h-4v-4Z" fill="currentColor" />
-        </symbol>
-        <symbol id="icon-session" viewBox="0 0 24 24">
-          <path d="M12 2 4 6.2v5.8c0 4.2 3.1 8.1 8 9.8 4.9-1.7 8-5.6 8-9.8V6.2L12 2Zm0 2.3 5.7 3v4.7c0 3.1-2.2 6.1-5.7 7.5-3.5-1.4-5.7-4.4-5.7-7.5V7.3l5.7-3Z" fill="currentColor" />
-        </symbol>
-        <symbol id="icon-link" viewBox="0 0 24 24">
-          <path d="M8.6 14.6a3 3 0 0 1 0-4.2l2.1-2.1a3 3 0 0 1 4.2 4.2L14 13.3l1.4 1.4 0.9-0.8a5 5 0 1 0-7.1-7.1L7 8.9a5 5 0 1 0 7.1 7.1l0.8-0.9-1.4-1.4-0.8 0.9a3 3 0 0 1-4.2 0Z" fill="currentColor" />
-        </symbol>
-        <symbol id="icon-transfer" viewBox="0 0 24 24">
-          <path d="M7 4h2v9h3L8 17 4 13h3V4Zm10 16h-2v-9h-3l4-4 4 4h-3v9Z" fill="currentColor" />
-        </symbol>
-        <symbol id="icon-log" viewBox="0 0 24 24">
-          <path d="M5 4h14v16H5V4Zm2 2v12h10V6H7Zm2 2h6v2H9V8Zm0 4h6v2H9v-2Z" fill="currentColor" />
         </symbol>
         <symbol id="icon-moon" viewBox="0 0 24 24">
           <path d="M14.8 3.4a8.8 8.8 0 1 0 5.8 15.5 9.7 9.7 0 0 1-11-13.1A8.7 8.7 0 0 0 14.8 3.4Z" fill="currentColor" />
@@ -73,281 +34,227 @@
         <symbol id="icon-sun" viewBox="0 0 24 24">
           <path d="M12 6a6 6 0 1 0 0 12 6 6 0 0 0 0-12Zm0-4h2v3h-2V2Zm0 17h2v3h-2v-3ZM2 11h3v2H2v-2Zm17 0h3v2h-3v-2ZM4.9 5.6 6.3 4.2l2.1 2.1-1.4 1.4-2.1-2.1Zm12.8 12.8 1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1Zm1.4-12.1 1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1ZM6.3 17.7l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1Z" fill="currentColor" />
         </symbol>
-        <symbol id="icon-upload" viewBox="0 0 24 24">
-          <path d="M11 20V9.8L7.8 13 6.4 11.6 12 6l5.6 5.6-1.4 1.4L13 9.8V20h-2Z" fill="currentColor" />
-        </symbol>
-        <symbol id="icon-download" viewBox="0 0 24 24">
-          <path d="M13 4v10.2l3.2-3.2 1.4 1.4L12 18l-5.6-5.6 1.4-1.4 3.2 3.2V4h2Z" fill="currentColor" />
-        </symbol>
       </defs>
     </svg>
-    <div class="lux-grid"></div>
-    <div class="lux-orb orb-a"></div>
-    <div class="lux-orb orb-b"></div>
-    <div class="lux-orb orb-c"></div>
 
-    <main class="relative mx-auto w-[min(1180px,94vw)] py-6 md:py-10 space-y-4 md:space-y-5">
-      <header class="panel hero">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div class="wordmark">
-            <span class="wordmark-badge" aria-hidden="true">
-              <svg viewBox="0 0 24 24" role="presentation"><use href="#icon-brand"></use></svg>
-            </span>
-            <div class="wordmark-copy">
-              <p class="wordmark-title">0xShare</p>
-              <p class="wordmark-sub">by 0xLynk</p>
-            </div>
-          </div>
-          <div class="hero-actions">
-            <p class="font-mono text-[0.72rem] uppercase tracking-[0.18em] text-slate-500">Private transfer architecture</p>
-            <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle theme">
-              <span class="theme-toggle-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" role="presentation"><use id="theme-toggle-icon" href="#icon-moon"></use></svg>
-              </span>
-              <span id="theme-toggle-label">Night</span>
-            </button>
+    <main class="app-shell mx-auto w-full max-w-[1240px] px-4 py-6 md:px-8 md:py-8">
+      <header class="topbar">
+        <div class="wordmark">
+          <span class="wordmark-badge" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="presentation"><use href="#icon-brand"></use></svg>
+          </span>
+          <div class="wordmark-copy">
+            <p class="wordmark-title">0xLynk</p>
+            <p class="wordmark-sub">secure browser transfer</p>
           </div>
         </div>
-        <h1 class="mt-2 max-w-4xl font-display text-3xl font-bold leading-[1.05] tracking-tight md:text-5xl">
-          Premium browser file transfer that feels instant and trustworthy.
-        </h1>
-        <p class="subtitle mt-4 max-w-3xl text-[0.98rem] md:text-[1.02rem]">
-          Create a room code, connect two browsers, and move files directly with WebRTC. Signaling handles setup only; file bytes stay peer to peer.
-        </p>
 
-        <div class="mt-6 grid gap-3 sm:grid-cols-3">
-          <div class="hero-stat">
-            <p class="k">Transport</p>
-            <p class="hero-stat-value">WebRTC DataChannel</p>
-          </div>
-          <div class="hero-stat">
-            <p class="k">Integrity</p>
-            <p class="hero-stat-value">SHA-256 verify</p>
-          </div>
-          <div class="hero-stat">
-            <p class="k">Session</p>
-            <p class="hero-stat-value">6-digit secure room</p>
-          </div>
+        <div class="hero-actions">
+          <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle theme">
+            <span class="theme-toggle-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" role="presentation"><use id="theme-toggle-icon" href="#icon-moon"></use></svg>
+            </span>
+            <span id="theme-toggle-label">Night</span>
+          </button>
+        </div>
+      </header>
+
+      <section class="intro">
+        <div class="hero-copy">
+          <p class="k">Peer-to-peer file transfer</p>
+          <h1>Send or receive files directly from your browser.</h1>
+          <p class="subtitle">
+            Create a room, join from another device, and transfer over encrypted WebRTC data channels.
+          </p>
         </div>
 
         <div id="status-banner" class="status-banner hidden" role="status" aria-live="polite">
           <span id="status-banner-text">Connecting...</span>
           <button id="reconnect-now" class="ghost hidden" type="button">Reconnect now</button>
         </div>
-      </header>
-
-      <section class="panel mode-panel">
-        <div class="panel-head">
-          <div class="panel-title">
-            <span class="panel-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" role="presentation"><use href="#icon-mode"></use></svg>
-            </span>
-            <h2 class="font-display text-xl font-semibold tracking-tight">Mode</h2>
-          </div>
-          <span class="font-mono text-xs uppercase tracking-[0.15em] text-slate-500">choose role</span>
-        </div>
-        <div class="mode-grid">
-          <button id="mode-sender" class="mode-btn active" type="button">Send files</button>
-          <button id="mode-receiver" class="mode-btn" type="button">Receive files</button>
-        </div>
       </section>
 
-      <section class="panel session-panel">
-        <div class="panel-head">
-          <div class="panel-title">
-            <span class="panel-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" role="presentation"><use href="#icon-session"></use></svg>
-            </span>
-            <h2 class="font-display text-xl font-semibold tracking-tight">Session</h2>
-          </div>
-          <span id="session-state" class="chip chip-muted">idle</span>
-        </div>
-
-        <div class="session-grid">
-          <div class="stack" id="sender-controls">
-            <button id="create-session" class="primary" type="button">Create room code</button>
-            <label for="create-passphrase">Optional room passphrase</label>
-            <input id="create-passphrase" type="password" placeholder="optional (recommended on shared networks)" />
-            <label for="create-join-auth-username">Optional room username</label>
-            <input id="create-join-auth-username" placeholder="optional (ex: demo-user)" />
-            <label for="create-join-auth-password">Optional room password</label>
-            <input id="create-join-auth-password" type="password" placeholder="optional (used with room username)" />
-            <p class="hint">Share the generated 6-digit code with your receiver.</p>
-          </div>
-
-          <div class="stack" id="receiver-controls">
-            <label for="join-code">Room code</label>
-            <div class="input-row">
-              <input id="join-code" inputmode="numeric" maxlength="6" placeholder="123456" />
-              <button id="join-session" class="primary" type="button">Join</button>
+      <section class="workspace-grid">
+        <div class="workspace-rail">
+          <section class="session-section">
+            <div class="section-head">
+              <h2>Session</h2>
+              <span id="session-state" class="chip chip-muted">idle</span>
             </div>
-            <label for="join-passphrase">Room passphrase (if set by sender)</label>
-            <input id="join-passphrase" type="password" placeholder="optional" />
-            <label for="join-auth-username">Room username (if set by sender)</label>
-            <input id="join-auth-username" placeholder="optional" />
-            <label for="join-auth-password">Room password (if set by sender)</label>
-            <input id="join-auth-password" type="password" placeholder="optional" />
-          </div>
-        </div>
+            <div class="mode-grid">
+              <button id="mode-sender" class="mode-btn active" type="button">Send files</button>
+              <button id="mode-receiver" class="mode-btn" type="button">Receive files</button>
+            </div>
 
-        <div class="room-display">
-          <div>
-            <p class="k">Room Code</p>
-            <p id="room-code" class="room-code">- - - - - -</p>
-          </div>
-          <div>
-            <p class="k">Role</p>
-            <p id="role-label">none</p>
-          </div>
-          <div>
-            <p class="k">Expires</p>
-            <p id="expires-label">-</p>
-          </div>
-          <div class="room-actions">
-            <button id="leave-session" class="ghost" type="button">Leave session</button>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel connection-panel">
-        <div class="panel-head">
-          <div class="panel-title">
-            <span class="panel-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" role="presentation"><use href="#icon-link"></use></svg>
-            </span>
-            <h2 class="font-display text-xl font-semibold tracking-tight">Connection</h2>
-          </div>
-          <span id="rtc-state" class="chip chip-muted">waiting</span>
-        </div>
-
-        <div class="status-grid">
-          <div>
-            <p class="k">Signaling</p>
-            <p id="ws-state">disconnected</p>
-          </div>
-          <div>
-            <p class="k">Peer</p>
-            <p id="peer-state">not joined</p>
-          </div>
-          <div>
-            <p class="k">DataChannel</p>
-            <p id="dc-state">closed</p>
-          </div>
-        </div>
-
-        <details class="advanced">
-          <summary>Advanced ICE/TURN options</summary>
-          <div class="advanced-grid">
-            <label>
-              TURN URLs
-              <input id="turn-urls" placeholder="turn:turn.example.com:3478" />
-            </label>
-            <label>
-              TURN username
-              <input id="turn-username" placeholder="optional" />
-            </label>
-            <label>
-              TURN credential
-              <input id="turn-credential" placeholder="optional" type="password" />
-            </label>
-          </div>
-        </details>
-      </section>
-
-      <section class="panel transfer-panel" id="transfer-panel">
-        <div class="panel-head">
-          <div class="panel-title">
-            <span class="panel-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" role="presentation"><use href="#icon-transfer"></use></svg>
-            </span>
-            <h2 class="font-display text-xl font-semibold tracking-tight">Transfer</h2>
-          </div>
-          <span id="transfer-state" class="chip chip-muted">idle</span>
-        </div>
-
-        <div id="sender-transfer" class="stack">
-          <label for="file-input">Files to send</label>
-          <input id="file-input" type="file" multiple class="hidden-file-input" />
-          <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="File drop zone">
-            <p class="dropzone-title">Drag files here</p>
-            <p class="hint">or tap to browse files</p>
-          </div>
-          <div class="input-row">
-            <p id="selected-files-label" class="hint">No files selected</p>
-            <button id="browse-files" class="ghost" type="button">Browse files</button>
-            <button id="clear-files" class="ghost" type="button">Clear files</button>
-          </div>
-          <ul id="selected-files-list" class="selected-files-list"></ul>
-
-          <div class="input-row">
-            <label for="chunk-size">Chunk size</label>
-            <select id="chunk-size">
-              <option value="16384">16 KB (max stability)</option>
-              <option value="32768" selected>32 KB (recommended)</option>
-              <option value="65536">64 KB</option>
-              <option value="131072">128 KB</option>
-              <option value="262144">256 KB</option>
-            </select>
-          </div>
-
-          <div class="action-row">
-            <button id="start-transfer" class="primary" type="button">Start</button>
-            <button id="pause-transfer" class="ghost" type="button">Pause</button>
-            <button id="resume-transfer" class="ghost" type="button">Resume</button>
-            <button id="cancel-transfer" class="danger" type="button">Cancel</button>
-          </div>
-        </div>
-
-        <div id="receiver-transfer" class="stack hidden">
-          <p class="hint">Wait for sender to start transfer. Files become downloadable after hash verification.</p>
-        </div>
-
-        <div class="progress-wrap">
-          <div class="progress-head">
-            <span>Overall progress</span>
-            <span id="overall-progress-label">0%</span>
-          </div>
-          <div class="progress-track"><div id="overall-progress-bar" class="progress-bar"></div></div>
-          <p id="overall-bytes" class="hint">0 B / 0 B</p>
-        </div>
-
-        <div class="files-grid">
-          <div>
-            <h3 class="font-display text-lg font-semibold tracking-tight">Outgoing</h3>
-            <div id="outgoing-empty" class="empty-state">
-              <div class="empty-state-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" role="presentation"><use href="#icon-upload"></use></svg>
+            <div class="session-grid">
+              <div class="stack" id="sender-controls">
+                <button id="create-session" class="primary" type="button">Create room code</button>
+                <label for="create-passphrase">Room passphrase</label>
+                <input id="create-passphrase" type="password" placeholder="Optional" />
+                <label for="create-join-auth-username">Room username</label>
+                <input id="create-join-auth-username" placeholder="Optional" />
+                <label for="create-join-auth-password">Room password</label>
+                <input id="create-join-auth-password" type="password" placeholder="Optional" />
+                <p class="hint">Share the generated room code with your receiver.</p>
               </div>
-              <p class="empty-state-title">No outgoing files yet</p>
-              <p class="empty-state-copy">Select files to queue and start a premium-speed transfer.</p>
-            </div>
-            <ul id="outgoing-list" class="file-list"></ul>
-          </div>
-          <div>
-            <h3 class="font-display text-lg font-semibold tracking-tight">Incoming</h3>
-            <div id="incoming-empty" class="empty-state">
-              <div class="empty-state-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" role="presentation"><use href="#icon-download"></use></svg>
-              </div>
-              <p class="empty-state-title">Waiting for sender</p>
-              <p class="empty-state-copy">Accepted files appear here with verification and one-tap download.</p>
-            </div>
-            <ul id="incoming-list" class="file-list"></ul>
-          </div>
-        </div>
-      </section>
 
-      <section class="panel log-panel">
-        <div class="panel-head">
-          <div class="panel-title">
-            <span class="panel-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" role="presentation"><use href="#icon-log"></use></svg>
-            </span>
-            <h2 class="font-display text-xl font-semibold tracking-tight">Activity</h2>
-          </div>
-          <button id="clear-log" class="ghost" type="button">Clear</button>
+              <div class="stack" id="receiver-controls">
+                <label for="join-code">Room code</label>
+                <div class="input-row">
+                  <input id="join-code" inputmode="numeric" maxlength="6" placeholder="123456" />
+                  <button id="join-session" class="primary" type="button">Join</button>
+                </div>
+                <label for="join-passphrase">Room passphrase</label>
+                <input id="join-passphrase" type="password" placeholder="Optional" />
+                <label for="join-auth-username">Room username</label>
+                <input id="join-auth-username" placeholder="Optional" />
+                <label for="join-auth-password">Room password</label>
+                <input id="join-auth-password" type="password" placeholder="Optional" />
+              </div>
+            </div>
+
+            <div class="room-display">
+              <div>
+                <p class="k">Room code</p>
+                <p id="room-code" class="room-code">- - - - - -</p>
+              </div>
+              <div>
+                <p class="k">Role</p>
+                <p id="role-label">none</p>
+              </div>
+              <div>
+                <p class="k">Expires</p>
+                <p id="expires-label">-</p>
+              </div>
+              <div class="room-actions">
+                <button id="leave-session" class="ghost" type="button">Leave session</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="connection-section">
+            <div class="section-head">
+              <h2>Connection</h2>
+              <span id="rtc-state" class="chip chip-muted">waiting</span>
+            </div>
+
+            <div class="status-grid">
+              <div>
+                <p class="k">Signaling</p>
+                <p id="ws-state">disconnected</p>
+              </div>
+              <div>
+                <p class="k">Peer</p>
+                <p id="peer-state">not joined</p>
+              </div>
+              <div>
+                <p class="k">DataChannel</p>
+                <p id="dc-state">closed</p>
+              </div>
+            </div>
+
+            <details class="advanced">
+              <summary>Advanced ICE/TURN options</summary>
+              <div class="advanced-grid">
+                <label>
+                  TURN URLs
+                  <input id="turn-urls" placeholder="turn:turn.example.com:3478" />
+                </label>
+                <label>
+                  TURN username
+                  <input id="turn-username" placeholder="Optional" />
+                </label>
+                <label>
+                  TURN credential
+                  <input id="turn-credential" placeholder="Optional" type="password" />
+                </label>
+              </div>
+            </details>
+          </section>
         </div>
-        <pre id="log-output" class="log-output"></pre>
+
+        <div class="workspace-content">
+          <section class="transfer-panel" id="transfer-panel">
+            <div class="section-head">
+              <h2>Transfer</h2>
+              <span id="transfer-state" class="chip chip-muted">idle</span>
+            </div>
+
+            <div id="sender-transfer" class="stack">
+              <label for="file-input">Files to send</label>
+              <input id="file-input" type="file" multiple class="hidden-file-input" />
+              <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="File drop zone">
+                <p class="dropzone-title">Drop files to stage transfer</p>
+                <p class="hint">or select manually to add assets</p>
+              </div>
+
+              <div class="input-row">
+                <p id="selected-files-label" class="hint">No files selected</p>
+                <button id="browse-files" class="ghost" type="button">Browse files</button>
+                <button id="clear-files" class="ghost" type="button">Clear files</button>
+              </div>
+
+              <ul id="selected-files-list" class="selected-files-list"></ul>
+
+              <div class="input-row">
+                <label for="chunk-size">Chunk size</label>
+                <select id="chunk-size">
+                  <option value="16384">16 KB (max stability)</option>
+                  <option value="32768" selected>32 KB (recommended)</option>
+                  <option value="65536">64 KB</option>
+                  <option value="131072">128 KB</option>
+                  <option value="262144">256 KB</option>
+                </select>
+              </div>
+
+              <div class="action-row">
+                <button id="start-transfer" class="primary" type="button">Start</button>
+                <button id="pause-transfer" class="ghost" type="button">Pause</button>
+                <button id="resume-transfer" class="ghost" type="button">Resume</button>
+                <button id="cancel-transfer" class="danger" type="button">Cancel</button>
+              </div>
+            </div>
+
+            <div id="receiver-transfer" class="stack hidden">
+              <p class="hint">Await sender initiation. Files appear after hash verification completes.</p>
+            </div>
+
+            <div class="progress-wrap">
+              <div class="progress-head">
+                <span>Overall progress</span>
+                <span id="overall-progress-label">0%</span>
+              </div>
+              <div class="progress-track"><div id="overall-progress-bar" class="progress-bar"></div></div>
+              <p id="overall-bytes" class="hint">0 B / 0 B</p>
+            </div>
+
+            <div class="files-grid">
+              <div>
+                <h3>Outgoing</h3>
+                <div id="outgoing-empty" class="empty-state">
+                  <p class="empty-state-title">No outgoing files</p>
+                </div>
+                <ul id="outgoing-list" class="file-list"></ul>
+              </div>
+
+              <div>
+                <h3>Incoming</h3>
+                <div id="incoming-empty" class="empty-state">
+                  <p class="empty-state-title">Receiver queue empty</p>
+                </div>
+                <ul id="incoming-list" class="file-list"></ul>
+              </div>
+            </div>
+          </section>
+
+          <section class="log-section">
+            <div class="section-head">
+              <h2>Activity Log</h2>
+              <button id="clear-log" class="ghost" type="button">Clear</button>
+            </div>
+            <pre id="log-output" class="log-output"></pre>
+          </section>
+        </div>
       </section>
     </main>
 
