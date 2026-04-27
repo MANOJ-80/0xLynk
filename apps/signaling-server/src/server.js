@@ -55,6 +55,8 @@ const metrics = {
   joinAuthProtectedSessions: 0,
   signalRelays: 0,
   turnRelayCandidates: 0,
+  relayMessages: 0,
+  relayBytes: 0,
   errors: {}
 };
 
@@ -634,6 +636,42 @@ function handleSignal(client, message) {
   });
 }
 
+function handleRelay(client, message, rawByteLength = 0) {
+  if (!client.sessionCode || !client.role) {
+    fail(client, "not_in_session", "Create or join a session first.");
+    return;
+  }
+
+  const session = sessions.get(client.sessionCode);
+  if (!session) {
+    fail(client, "session_not_found", "Session no longer exists.");
+    return;
+  }
+
+  const peer = getPeerClient(session, client.role);
+  if (!peer) {
+    fail(client, "peer_unavailable", "Peer is not connected yet.");
+    return;
+  }
+
+  const relayType = String(message.relayType || "");
+  if (!relayType || !["control", "chunk"].includes(relayType)) {
+    fail(client, "invalid_relay_type", "relayType must be control or chunk.");
+    return;
+  }
+
+  metrics.relayMessages += 1;
+  metrics.relayBytes += Number.isFinite(rawByteLength) ? rawByteLength : 0;
+
+  sendJson(peer.ws, {
+    type: "relay",
+    code: session.code,
+    relayType,
+    payload: message.payload,
+    from: client.role
+  });
+}
+
 function handleLeaveSession(client) {
   if (!client.sessionCode || !client.role) {
     fail(client, "not_in_session", "Not currently in a session.");
@@ -670,6 +708,9 @@ async function handleMessage(client, raw) {
       break;
     case "signal":
       handleSignal(client, message);
+      break;
+    case "relay":
+      handleRelay(client, message, raw.length);
       break;
     case "leave_session":
       handleLeaveSession(client);

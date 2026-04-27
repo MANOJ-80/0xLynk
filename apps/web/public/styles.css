@@ -341,7 +341,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 40px;
   border-radius: var(--radius-md);
@@ -352,12 +353,21 @@ select {
   transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-input::placeholder {
+textarea {
+  min-height: 118px;
+  padding: 10px 12px;
+  resize: vertical;
+  font: 500 0.72rem/1.45 "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+input::placeholder,
+textarea::placeholder {
   color: var(--text-tertiary);
 }
 
 input:focus,
 select:focus,
+textarea:focus,
 button:focus,
 summary:focus,
 .dropzone:focus {
@@ -438,6 +448,164 @@ summary:focus,
   margin-top: var(--space-1);
   display: grid;
   gap: var(--space-1);
+}
+
+.connection-mode-grid {
+  margin-top: -8px;
+}
+
+.manual-panel {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.policy-grid {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.manual-panel-head,
+.manual-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+}
+
+.manual-panel-head h3,
+.manual-card h4 {
+  margin: 0;
+  color: var(--text-primary);
+  letter-spacing: 0;
+}
+
+.manual-panel-head h3 {
+  font-size: 0.98rem;
+  font-weight: 650;
+}
+
+.manual-role-panel {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.manual-card {
+  display: grid;
+  gap: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  background: var(--bg-muted);
+}
+
+.manual-card h4 {
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.manual-card .hint {
+  margin-top: 2px;
+}
+
+.step-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font: 600 0.72rem/1 "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+.manual-busy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  border: 1px solid color-mix(in srgb, var(--warning) 34%, var(--border));
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  color: color-mix(in srgb, var(--warning) 76%, var(--text-primary));
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+  font-size: 0.82rem;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--warning) 26%, transparent);
+  border-top-color: color-mix(in srgb, var(--warning) 88%, var(--text-primary));
+  animation: spin 700ms linear infinite;
+}
+
+.qr-canvas {
+  width: 220px;
+  height: 220px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  padding: 8px;
+}
+
+.policy-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: end;
+}
+
+.check-row {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.check-row input {
+  width: 16px;
+  min-height: 16px;
+  flex: 0 0 auto;
+}
+
+.pending-offer {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-1);
+  background: var(--bg-muted);
+}
+
+.scanner-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-1);
+  background: var(--bg-muted);
+}
+
+.scanner-panel video {
+  display: block;
+  width: 100%;
+  max-height: 260px;
+  border-radius: var(--radius-sm);
+  background: #000000;
+  object-fit: cover;
+}
+
+.scanner-actions {
+  margin-top: var(--space-1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .hint {
@@ -1198,7 +1366,8 @@ button.danger {
 }
 
 input,
-select {
+select,
+textarea {
   min-height: 38px;
   border-color: var(--border);
   border-radius: var(--radius-sm);
@@ -1207,6 +1376,7 @@ select {
 
 input:focus,
 select:focus,
+textarea:focus,
 button:focus,
 summary:focus,
 .dropzone:focus {

@@ -1,11 +1,24 @@
 const STORAGE_KEY = "0xlynk.session.v1";
 const THEME_STORAGE_KEY = "0xlynk.theme.v1";
+const RECEIVE_POLICY_STORAGE_KEY = "0xlynk.receive-policy.v1";
 const DEFAULT_THEME = "night";
 const THEMES = {
   night: { label: "Night", iconHref: "#icon-moon" },
   day: { label: "Day", iconHref: "#icon-sun" }
 };
-const FALLBACK_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+const FALLBACK_ICE_SERVERS = [
+  {
+    urls: [
+      "stun:stun.l.google.com:19302",
+      "stun:stun.l.google.com:19305",
+      "stun:stun4.l.google.com:19302",
+      "stun:stun.nextcloud.com:3478",
+      "stun:stun.nextcloud.com:443",
+      "stun:stun.sipgate.net:3478"
+    ]
+  }
+];
+const RELAY_CHUNK_MAX_BYTES = 12 * 1024;
 const DEFAULT_MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 const DEFAULT_BUFFERED_LOW_WATERMARK = 4 * 1024 * 1024;
 const CHUNK_HEADER_SIZE = 13;
@@ -52,10 +65,15 @@ const DEFAULT_CHUNK_SIZE = 32 * 1024;
 const MAX_DC_FLAPS_WINDOW_MS = 30_000;
 const MAX_DC_FLAPS_BEFORE_FAIL = 4;
 const TRANSFER_RENDER_MIN_INTERVAL_MS = 120;
+const MANUAL_PAYLOAD_PREFIX = "0XL1.";
+const MANUAL_ICE_GATHER_TIMEOUT_MS = 5500;
+const MANUAL_QR_DENSE_CHARS = 2400;
 
 const els = {
   modeSender: document.getElementById("mode-sender"),
   modeReceiver: document.getElementById("mode-receiver"),
+  connectionRoom: document.getElementById("connection-room"),
+  connectionManual: document.getElementById("connection-manual"),
   createSession: document.getElementById("create-session"),
   createPassphrase: document.getElementById("create-passphrase"),
   createJoinAuthUsername: document.getElementById("create-join-auth-username"),
@@ -79,6 +97,31 @@ const els = {
   transferState: document.getElementById("transfer-state"),
   senderControls: document.getElementById("sender-controls"),
   receiverControls: document.getElementById("receiver-controls"),
+  manualControls: document.getElementById("manual-controls"),
+  manualSenderPanel: document.getElementById("manual-sender-panel"),
+  manualReceiverPanel: document.getElementById("manual-receiver-panel"),
+  manualRoleTitle: document.getElementById("manual-role-title"),
+  manualStepChip: document.getElementById("manual-step-chip"),
+  manualBusy: document.getElementById("manual-busy"),
+  manualBusyText: document.getElementById("manual-busy-text"),
+  manualCreateOffer: document.getElementById("manual-create-offer"),
+  manualOfferOutput: document.getElementById("manual-offer-output"),
+  manualOfferInput: document.getElementById("manual-offer-input"),
+  manualAcceptOffer: document.getElementById("manual-accept-offer"),
+  manualAnswerOutput: document.getElementById("manual-answer-output"),
+  manualAnswerInput: document.getElementById("manual-answer-input"),
+  manualAcceptAnswer: document.getElementById("manual-accept-answer"),
+  manualCopyOffer: document.getElementById("manual-copy-offer"),
+  manualCopyAnswer: document.getElementById("manual-copy-answer"),
+  manualScanOffer: document.getElementById("manual-scan-offer"),
+  manualScanAnswer: document.getElementById("manual-scan-answer"),
+  manualScanner: document.getElementById("manual-scanner"),
+  manualScannerVideo: document.getElementById("manual-scanner-video"),
+  manualScannerStatus: document.getElementById("manual-scanner-status"),
+  manualStopScan: document.getElementById("manual-stop-scan"),
+  manualOfferQr: document.getElementById("manual-offer-qr"),
+  manualAnswerQr: document.getElementById("manual-answer-qr"),
+  manualStatus: document.getElementById("manual-status"),
   senderTransfer: document.getElementById("sender-transfer"),
   receiverTransfer: document.getElementById("receiver-transfer"),
   fileInput: document.getElementById("file-input"),
@@ -90,6 +133,13 @@ const els = {
   chunkSize: document.getElementById("chunk-size"),
   chooseSaveDir: document.getElementById("choose-save-dir"),
   saveDirLabel: document.getElementById("save-dir-label"),
+  receiveAutoAccept: document.getElementById("receive-auto-accept"),
+  receiveMaxFileSize: document.getElementById("receive-max-file-size"),
+  receiveMaxFileCount: document.getElementById("receive-max-file-count"),
+  receivePendingOffer: document.getElementById("receive-pending-offer"),
+  receivePendingSummary: document.getElementById("receive-pending-summary"),
+  receiveAcceptOffer: document.getElementById("receive-accept-offer"),
+  receiveRejectOffer: document.getElementById("receive-reject-offer"),
   startTransfer: document.getElementById("start-transfer"),
   pauseTransfer: document.getElementById("pause-transfer"),
   resumeTransfer: document.getElementById("resume-transfer"),
@@ -119,6 +169,7 @@ const els = {
 
 const state = {
   mode: "sender",
+  connectionMode: "room",
   ws: null,
   wsConnected: false,
   wsReconnectTimer: null,
@@ -136,6 +187,7 @@ const state = {
   peerRecoveryTimer: null,
   peerRecoveryInFlight: false,
   peerRecoveryLastAttemptAt: 0,
+  rtcFailureTimestamps: [],
   dcFlapTimestamps: [],
   session: {
     code: null,
@@ -147,6 +199,21 @@ const state = {
   },
   peerJoined: false,
   runtimeIceServers: [...FALLBACK_ICE_SERVERS],
+  manual: {
+    offerText: "",
+    answerText: "",
+    status: "idle",
+    busy: false,
+    scannerStream: null,
+    scannerTimer: null,
+    scannerTarget: null
+  },
+  receivePolicy: {
+    autoAccept: true,
+    maxFileSizeBytes: 0,
+    maxFileCount: 0,
+    pendingOffer: null
+  },
   rtc: {
     pc: null,
     dc: null,
@@ -155,6 +222,7 @@ const state = {
   },
   transfer: {
     status: "idle",
+    transport: "webrtc",
     chunkSize: DEFAULT_CHUNK_SIZE,
     adaptiveChunkSize: true,
     maxBufferedBytes: DEFAULT_MAX_BUFFERED_BYTES,
@@ -716,6 +784,7 @@ function resetTransferState() {
     state.transfer.renderTimer = null;
   }
   state.transfer.status = "idle";
+  state.transfer.transport = "webrtc";
   state.transfer.paused = false;
   state.transfer.cancelled = false;
   state.transfer.running = false;
@@ -732,6 +801,8 @@ function resetTransferState() {
   state.transfer.fileAckWaiters.forEach((waiter) => waiter.reject(new Error("transfer_reset")));
   state.transfer.fileAckWaiters.clear();
   state.transfer.fileAckResults.clear();
+  state.receivePolicy.pendingOffer = null;
+  state.rtcFailureTimestamps = [];
   state.dcFlapTimestamps = [];
 
   if (state.transfer.incoming?.files) {
@@ -756,6 +827,299 @@ function sendWs(payload) {
   }
   state.ws.send(JSON.stringify(payload));
   return true;
+}
+
+function canUseRelayTransport() {
+  if (isManualMode()) {
+    return false;
+  }
+  return Boolean(state.wsConnected && state.session.code && state.peerJoined);
+}
+
+function markRtcFailure() {
+  const nowTs = Date.now();
+  state.rtcFailureTimestamps = state.rtcFailureTimestamps.filter((ts) => nowTs - ts <= 45_000);
+  state.rtcFailureTimestamps.push(nowTs);
+}
+
+function shouldAutoFallbackToRelay() {
+  return state.rtcFailureTimestamps.length >= 2 && canUseRelayTransport();
+}
+
+function uint8ToBase64(bytes) {
+  let binary = "";
+  const batch = 0x8000;
+  for (let i = 0; i < bytes.length; i += batch) {
+    const slice = bytes.subarray(i, i + batch);
+    binary += String.fromCharCode(...slice);
+  }
+  return btoa(binary);
+}
+
+function base64ToArrayBuffer(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+function base64UrlEncode(bytes) {
+  return uint8ToBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlDecode(text) {
+  const normalized = String(text || "").replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  return new Uint8Array(base64ToArrayBuffer(padded));
+}
+
+async function gzipText(text) {
+  if (typeof CompressionStream !== "function") {
+    return new TextEncoder().encode(text);
+  }
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function gunzipText(bytes) {
+  if (typeof DecompressionStream !== "function") {
+    return new TextDecoder().decode(bytes);
+  }
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Response(stream).text();
+}
+
+async function encodeManualPayload(type, description) {
+  const payload = {
+    v: 1,
+    type,
+    description
+  };
+  const compressed = await gzipText(JSON.stringify(payload));
+  return `${MANUAL_PAYLOAD_PREFIX}${base64UrlEncode(compressed)}`;
+}
+
+async function decodeManualPayload(rawText, expectedType) {
+  const text = String(rawText || "").trim();
+  if (!text.startsWith(MANUAL_PAYLOAD_PREFIX)) {
+    throw new Error("manual_payload_format");
+  }
+  const bytes = base64UrlDecode(text.slice(MANUAL_PAYLOAD_PREFIX.length));
+  const json = await gunzipText(bytes);
+  const payload = JSON.parse(json);
+  if (!payload || payload.v !== 1 || payload.type !== expectedType || !payload.description) {
+    throw new Error("manual_payload_type");
+  }
+  return payload.description;
+}
+
+function waitForIceGatheringComplete(pc) {
+  if (pc.iceGatheringState === "complete") {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) {
+        return;
+      }
+      done = true;
+      pc.removeEventListener("icegatheringstatechange", onStateChange);
+      clearTimeout(timer);
+      resolve();
+    };
+    const onStateChange = () => {
+      if (pc.iceGatheringState === "complete") {
+        finish();
+      }
+    };
+    const timer = setTimeout(finish, MANUAL_ICE_GATHER_TIMEOUT_MS);
+    pc.addEventListener("icegatheringstatechange", onStateChange);
+  });
+}
+
+function resetManualOutputs() {
+  stopManualScan();
+  setManualBusy(false);
+  state.manual.offerText = "";
+  state.manual.answerText = "";
+  if (els.manualOfferOutput) {
+    els.manualOfferOutput.value = "";
+  }
+  if (els.manualAnswerOutput) {
+    els.manualAnswerOutput.value = "";
+  }
+  renderManualQr(els.manualOfferQr, "");
+  renderManualQr(els.manualAnswerQr, "");
+}
+
+function setManualStatus(message) {
+  state.manual.status = message;
+  if (els.manualStatus) {
+    els.manualStatus.textContent = message;
+  }
+}
+
+function setManualBusy(isBusy, message = "Gathering network candidates...") {
+  state.manual.busy = Boolean(isBusy);
+  if (els.manualBusy) {
+    els.manualBusy.classList.toggle("hidden", !isBusy);
+  }
+  if (els.manualBusyText) {
+    els.manualBusyText.textContent = message;
+  }
+  if (els.manualCreateOffer) {
+    els.manualCreateOffer.disabled = state.manual.busy;
+    els.manualCreateOffer.textContent = state.manual.busy && state.session.role === "sender" ? "Preparing offer..." : "Create offer";
+  }
+  if (els.manualAcceptOffer) {
+    els.manualAcceptOffer.disabled = state.manual.busy;
+    els.manualAcceptOffer.textContent = state.manual.busy && state.session.role === "receiver" ? "Preparing answer..." : "Create answer";
+  }
+}
+
+function describeManualPayload(text) {
+  if (!text) {
+    return "";
+  }
+  if (text.length >= MANUAL_QR_DENSE_CHARS) {
+    return " QR may be dense on low-end cameras; copy/paste is the fallback.";
+  }
+  return "";
+}
+
+function renderManualQr(canvas, text) {
+  if (!canvas) {
+    return;
+  }
+  if (!text) {
+    canvas.classList.add("hidden");
+    return;
+  }
+  if (!window.QRCode || typeof window.QRCode.toCanvas !== "function") {
+    canvas.classList.add("hidden");
+    return;
+  }
+  window.QRCode.toCanvas(canvas, text, {
+    width: 220,
+    margin: 1,
+    errorCorrectionLevel: "M",
+    color: {
+      dark: "#0a0a0a",
+      light: "#ffffff"
+    }
+  }, (error) => {
+    canvas.classList.toggle("hidden", Boolean(error));
+    if (error) {
+      log("QR render failed", { message: error.message });
+    }
+  });
+}
+
+function stopManualScan() {
+  if (state.manual.scannerTimer) {
+    clearInterval(state.manual.scannerTimer);
+    state.manual.scannerTimer = null;
+  }
+  if (state.manual.scannerStream) {
+    state.manual.scannerStream.getTracks().forEach((track) => track.stop());
+    state.manual.scannerStream = null;
+  }
+  state.manual.scannerTarget = null;
+  if (els.manualScannerVideo) {
+    els.manualScannerVideo.srcObject = null;
+  }
+  if (els.manualScanner) {
+    els.manualScanner.classList.add("hidden");
+  }
+}
+
+async function startManualScan(target) {
+  stopManualScan();
+  if (!("BarcodeDetector" in window)) {
+    setManualStatus("QR scanning is not supported in this browser. Paste the QR text instead.");
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setManualStatus("Camera access is not available. Paste the QR text instead.");
+    return;
+  }
+
+  try {
+    const detector = new BarcodeDetector({ formats: ["qr_code"] });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "environment"
+      },
+      audio: false
+    });
+    state.manual.scannerStream = stream;
+    state.manual.scannerTarget = target;
+    els.manualScannerVideo.srcObject = stream;
+    els.manualScanner.classList.remove("hidden");
+    els.manualScannerStatus.textContent = `Scanning ${target} QR...`;
+    await els.manualScannerVideo.play();
+
+    state.manual.scannerTimer = setInterval(async () => {
+      if (!state.manual.scannerStream || els.manualScannerVideo.readyState < 2) {
+        return;
+      }
+      try {
+        const codes = await detector.detect(els.manualScannerVideo);
+        const value = String(codes[0]?.rawValue || "").trim();
+        if (!value) {
+          return;
+        }
+        if (!value.startsWith(MANUAL_PAYLOAD_PREFIX)) {
+          els.manualScannerStatus.textContent = "QR found, but it is not a 0xLynk pairing code.";
+          return;
+        }
+        if (target === "offer") {
+          els.manualOfferInput.value = value;
+        } else {
+          els.manualAnswerInput.value = value;
+        }
+        stopManualScan();
+        setManualStatus(`${target === "offer" ? "Offer" : "Answer"} QR scanned. Continue with the next pairing step.`);
+      } catch {
+        // Camera frames can fail transiently; keep scanning.
+      }
+    }, 350);
+  } catch (error) {
+    stopManualScan();
+    const denied = error?.name === "NotAllowedError" || error?.name === "SecurityError";
+    setManualStatus(denied ? "Camera permission denied. Paste the QR text instead." : "Could not start camera scanner. Paste the QR text instead.");
+    log("Manual QR scan failed", { message: error.message || "unknown" });
+  }
+}
+
+async function copyText(text, label) {
+  if (!text) {
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    log(`${label} copied`);
+  } catch {
+    log(`Could not copy ${label.toLowerCase()}`);
+  }
+}
+
+function isManualMode() {
+  return state.connectionMode === "manual";
+}
+
+function sendRelay(relayType, payload) {
+  if (!canUseRelayTransport()) {
+    throw new Error("relay_not_ready");
+  }
+  const ok = sendWs({ type: "relay", relayType, payload });
+  if (!ok) {
+    throw new Error("relay_not_ready");
+  }
 }
 
 function buildWsUrl() {
@@ -829,6 +1193,9 @@ function cancelPeerRecovery() {
 
 function schedulePeerRecovery() {
   cancelPeerRecovery();
+  if (isManualMode()) {
+    return;
+  }
   if (!state.session.code || !state.peerJoined || state.session.role !== "sender") {
     return;
   }
@@ -1015,6 +1382,8 @@ function setupDataChannel(dc) {
   dc.binaryType = "arraybuffer";
 
   dc.addEventListener("open", () => {
+    state.transfer.transport = "webrtc";
+    state.rtcFailureTimestamps = [];
     state.dcFlapTimestamps = [];
     applyFlowControlProfile();
     log("DataChannel open");
@@ -1087,7 +1456,7 @@ function ensurePeerConnection() {
   state.rtc.pc = pc;
 
   pc.addEventListener("icecandidate", (event) => {
-    if (!event.candidate || !state.session.code) {
+    if (!event.candidate || !state.session.code || isManualMode()) {
       return;
     }
     sendWs({
@@ -1103,6 +1472,18 @@ function ensurePeerConnection() {
     renderStatusBanner();
     if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
       log("Peer connection state", { state: pc.connectionState });
+      if (pc.connectionState === "failed") {
+        markRtcFailure();
+        if (isManualMode()) {
+          showStatusBanner("Direct manual P2P failed. Try a fresh offer, use room mode, or configure TURN for strict NAT/firewall networks.", "bad", false);
+          setManualStatus("Direct WebRTC failed. This usually means restrictive NAT/firewall; TURN is the reliable fallback.");
+        }
+      }
+      if (shouldAutoFallbackToRelay()) {
+        state.transfer.transport = "relay";
+        showStatusBanner("Direct P2P failed on this network. Using relay fallback via signaling (slower).", "warn", false);
+        log("Relay fallback enabled", { reason: "rtc_failed" });
+      }
       if (state.session.role === "sender" && state.peerJoined && !state.transfer.running) {
         schedulePeerRecovery();
       }
@@ -1198,6 +1579,118 @@ async function handleWebRtcSignal(signalType, payload, fromRole) {
         log("ICE add failed", { message: error.message });
       }
     }
+  }
+}
+
+function enterManualSession(role) {
+  cancelPeerRecovery();
+  stopManualScan();
+  state.connectionMode = "manual";
+  state.mode = role;
+  state.session = {
+    code: "manual",
+    role,
+    token: null,
+    expiresAt: null,
+    requiresPassphrase: false,
+    requiresJoinAuth: false
+  };
+  state.peerJoined = false;
+  localStorage.removeItem(STORAGE_KEY);
+  renderAll();
+}
+
+async function createManualOffer() {
+  enterManualSession("sender");
+  resetTransferState();
+  resetManualOutputs();
+  teardownPeerConnection();
+  const pc = ensurePeerConnection();
+  setupDataChannel(pc.createDataChannel("file-transfer", { ordered: true }));
+  try {
+    state.rtc.makingOffer = true;
+    setManualBusy(true, "Gathering direct network candidates. This can take a few seconds.");
+    setManualStatus("Preparing offer...");
+    await pc.setLocalDescription(await pc.createOffer());
+    await waitForIceGatheringComplete(pc);
+    const encoded = await encodeManualPayload("offer", pc.localDescription);
+    state.manual.offerText = encoded;
+    els.manualOfferOutput.value = encoded;
+    renderManualQr(els.manualOfferQr, encoded);
+    setManualStatus(`Offer ready (${encoded.length} chars). Share the text or QR with the receiver, then paste their answer.${describeManualPayload(encoded)}`);
+    log("Manual offer created", { chars: encoded.length });
+  } catch (error) {
+    setManualStatus("Could not create manual offer. Check browser WebRTC support and retry.");
+    log("Manual offer failed", { message: error.message });
+  } finally {
+    state.rtc.makingOffer = false;
+    setManualBusy(false);
+    renderAll();
+  }
+}
+
+async function createManualAnswer() {
+  const rawOffer = els.manualOfferInput.value.trim();
+  if (!rawOffer) {
+    setManualStatus("Paste a sender offer before creating an answer.");
+    return;
+  }
+
+  enterManualSession("receiver");
+  resetTransferState();
+  state.manual.answerText = "";
+  els.manualAnswerOutput.value = "";
+  renderManualQr(els.manualAnswerQr, "");
+  teardownPeerConnection();
+  const pc = ensurePeerConnection();
+  try {
+    setManualBusy(true, "Reading offer and gathering direct network candidates.");
+    setManualStatus("Preparing answer...");
+    const offer = await decodeManualPayload(rawOffer, "offer");
+    await pc.setRemoteDescription(offer);
+    await pc.setLocalDescription(await pc.createAnswer());
+    await waitForIceGatheringComplete(pc);
+    const encoded = await encodeManualPayload("answer", pc.localDescription);
+    state.manual.answerText = encoded;
+    els.manualAnswerOutput.value = encoded;
+    renderManualQr(els.manualAnswerQr, encoded);
+    state.peerJoined = true;
+    setManualStatus(`Answer ready (${encoded.length} chars). Share it back to the sender and keep this tab open.${describeManualPayload(encoded)}`);
+    log("Manual answer created", { chars: encoded.length });
+  } catch (error) {
+    setManualStatus("Could not read that offer. Ask the sender to create a fresh offer.");
+    log("Manual answer failed", { message: error.message });
+  } finally {
+    setManualBusy(false);
+    renderAll();
+  }
+}
+
+async function acceptManualAnswer() {
+  const rawAnswer = els.manualAnswerInput.value.trim();
+  if (!rawAnswer) {
+    setManualStatus("Paste the receiver answer before connecting.");
+    return;
+  }
+  if (state.session.role !== "sender" || !state.rtc.pc) {
+    setManualStatus("Create an offer first, then paste the receiver answer.");
+    return;
+  }
+
+  try {
+    setManualBusy(true, "Applying receiver answer.");
+    setManualStatus("Applying receiver answer...");
+    const answer = await decodeManualPayload(rawAnswer, "answer");
+    await state.rtc.pc.setRemoteDescription(answer);
+    state.peerJoined = true;
+    setManualStatus("Manual peer connection started. Wait for the DataChannel to open.");
+    log("Manual answer accepted");
+  } catch (error) {
+    setManualStatus("Could not read that answer. Ask the receiver to create a fresh answer.");
+    log("Manual answer import failed", { message: error.message });
+  } finally {
+    setManualBusy(false);
+    renderAll();
   }
 }
 
@@ -1316,6 +1809,10 @@ function stopTelemetry() {
 }
 
 function sendControl(payload) {
+  if (state.transfer.transport === "relay") {
+    sendRelay("control", payload);
+    return;
+  }
   if (!dataChannelReady()) {
     throw new Error("datachannel_not_ready");
   }
@@ -1503,7 +2000,7 @@ async function sendChunk(fileRecord, chunkIndex, trackProgress = true) {
 
   for (let attempt = 0; attempt <= MAX_CHUNK_SEND_RETRIES; attempt += 1) {
     await waitWhilePausedOrCancelled();
-    if (!dataChannelReady()) {
+    if (state.transfer.transport !== "relay" && !dataChannelReady()) {
       if (attempt === MAX_CHUNK_SEND_RETRIES) {
         throw new Error("datachannel_not_open");
       }
@@ -1511,9 +2008,16 @@ async function sendChunk(fileRecord, chunkIndex, trackProgress = true) {
       continue;
     }
 
-    await waitForBufferedLowWatermark();
+    if (state.transfer.transport !== "relay") {
+      await waitForBufferedLowWatermark();
+    }
     try {
-      state.rtc.dc.send(encodeChunkFrame(fileRecord.id, chunkIndex, payload));
+      const chunkFrame = encodeChunkFrame(fileRecord.id, chunkIndex, payload);
+      if (state.transfer.transport === "relay") {
+        sendRelay("chunk", { frame: uint8ToBase64(new Uint8Array(chunkFrame)) });
+      } else {
+        state.rtc.dc.send(chunkFrame);
+      }
       const sent = end - start;
       if (trackProgress) {
         updateOutgoingHash(fileRecord, payload);
@@ -1627,15 +2131,23 @@ async function runOutgoingTransfer() {
     return;
   }
 
-  if (!dataChannelReady()) {
+  if (!dataChannelReady() && state.transfer.transport !== "relay") {
     if (state.session.role === "sender" && state.peerJoined) {
       schedulePeerRecovery();
     }
-    state.transfer.status = "awaiting_channel";
-    showStatusBanner("Waiting for peer channel to reopen before sending.", "warn", false);
-    renderTransfer();
-    return;
+    if (canUseRelayTransport()) {
+      state.transfer.transport = "relay";
+      showStatusBanner("Direct channel unavailable. Falling back to signaling relay (slower).", "warn", false);
+      log("Switched transfer transport", { transport: "relay", reason: "channel_not_ready" });
+    } else {
+      state.transfer.status = "awaiting_channel";
+      showStatusBanner("Waiting for peer channel to reopen before sending.", "warn", false);
+      renderTransfer();
+      return;
+    }
   }
+
+  let resumeWithRelay = false;
 
   state.transfer.running = true;
   state.transfer.status = "transferring";
@@ -1659,18 +2171,29 @@ async function runOutgoingTransfer() {
     state.transfer.telemetry.completedAt = Date.now();
     sampleTransferTelemetry();
     stopTelemetry();
-    log("Transfer completed", { transferId: state.transfer.transferId });
+    log("Transfer completed", { transferId: state.transfer.transferId, transport: state.transfer.transport });
   } catch (error) {
     if (error?.message === "datachannel_not_open" || error?.message?.includes("readyState is not 'open'")) {
-      if (state.session.role === "sender" && state.peerJoined) {
-        schedulePeerRecovery();
+      if (canUseRelayTransport()) {
+        state.transfer.transport = "relay";
+        state.transfer.status = "transferring";
+        resumeWithRelay = true;
+        showStatusBanner("Direct P2P dropped. Continuing via signaling relay (slower).", "warn", false);
+        log("Resuming transfer with relay fallback", {
+          fileIndex: state.transfer.currentFileIndex,
+          chunkIndex: state.transfer.currentChunkIndex
+        });
+      } else {
+        if (state.session.role === "sender" && state.peerJoined) {
+          schedulePeerRecovery();
+        }
+        state.transfer.status = "awaiting_channel";
+        showStatusBanner("Connection dropped mid-transfer. Auto-resume when channel reconnects.", "warn", false);
+        log("Transfer paused awaiting channel reopen", {
+          fileIndex: state.transfer.currentFileIndex,
+          chunkIndex: state.transfer.currentChunkIndex
+        });
       }
-      state.transfer.status = "awaiting_channel";
-      showStatusBanner("Connection dropped mid-transfer. Auto-resume when channel reconnects.", "warn", false);
-      log("Transfer paused awaiting channel reopen", {
-        fileIndex: state.transfer.currentFileIndex,
-        chunkIndex: state.transfer.currentChunkIndex
-      });
     } else {
       state.transfer.status = state.transfer.cancelled ? "cancelled" : "failed";
       stopTelemetry();
@@ -1678,7 +2201,14 @@ async function runOutgoingTransfer() {
     }
   } finally {
     state.transfer.running = false;
-    scheduleTransferRender();
+    renderTransfer();
+    if (resumeWithRelay && !state.transfer.cancelled && state.transfer.status === "transferring") {
+      queueMicrotask(() => {
+        void runOutgoingTransfer();
+      });
+    } else {
+      scheduleTransferRender();
+    }
   }
 }
 
@@ -1834,6 +2364,98 @@ async function handleIncomingChunk(buffer) {
   }
 }
 
+function readReceivePolicy() {
+  const maxFileSizeMb = Number(els.receiveMaxFileSize?.value || 0);
+  const maxFileCount = Number(els.receiveMaxFileCount?.value || 0);
+  state.receivePolicy.autoAccept = Boolean(els.receiveAutoAccept?.checked);
+  state.receivePolicy.maxFileSizeBytes = Number.isFinite(maxFileSizeMb) && maxFileSizeMb > 0
+    ? maxFileSizeMb * 1024 * 1024
+    : 0;
+  state.receivePolicy.maxFileCount = Number.isFinite(maxFileCount) && maxFileCount > 0
+    ? Math.floor(maxFileCount)
+    : 0;
+}
+
+function persistReceivePolicy() {
+  try {
+    localStorage.setItem(RECEIVE_POLICY_STORAGE_KEY, JSON.stringify({
+      autoAccept: state.receivePolicy.autoAccept,
+      maxFileSizeMb: Number(els.receiveMaxFileSize?.value || 0) || 0,
+      maxFileCount: Number(els.receiveMaxFileCount?.value || 0) || 0
+    }));
+  } catch {
+    // no-op
+  }
+}
+
+function loadReceivePolicy() {
+  try {
+    const raw = localStorage.getItem(RECEIVE_POLICY_STORAGE_KEY);
+    if (!raw) {
+      return;
+    }
+    const policy = JSON.parse(raw);
+    if (els.receiveAutoAccept && typeof policy.autoAccept === "boolean") {
+      els.receiveAutoAccept.checked = policy.autoAccept;
+    }
+    if (els.receiveMaxFileSize && Number.isFinite(Number(policy.maxFileSizeMb))) {
+      els.receiveMaxFileSize.value = Number(policy.maxFileSizeMb) > 0 ? String(Number(policy.maxFileSizeMb)) : "";
+    }
+    if (els.receiveMaxFileCount && Number.isFinite(Number(policy.maxFileCount))) {
+      els.receiveMaxFileCount.value = Number(policy.maxFileCount) > 0 ? String(Math.floor(Number(policy.maxFileCount))) : "";
+    }
+  } catch {
+    // no-op
+  }
+}
+
+function updateReceivePolicy() {
+  readReceivePolicy();
+  persistReceivePolicy();
+}
+
+function validateIncomingTransferOffer(message) {
+  readReceivePolicy();
+  const files = Array.isArray(message.files) ? message.files : [];
+  if (!files.length) {
+    return "empty_transfer";
+  }
+  if (state.receivePolicy.maxFileCount && files.length > state.receivePolicy.maxFileCount) {
+    return "file_count_limit";
+  }
+  if (state.receivePolicy.maxFileSizeBytes) {
+    const oversized = files.find((file) => Number(file.size || 0) > state.receivePolicy.maxFileSizeBytes);
+    if (oversized) {
+      return "file_size_limit";
+    }
+  }
+  return "";
+}
+
+function acceptIncomingTransferOffer(message) {
+  state.receivePolicy.pendingOffer = null;
+  state.transfer.transport = message.transport === "relay" ? "relay" : "webrtc";
+  setIncomingTransfer(message);
+  sendControl({ type: "transfer_accept", transferId: message.transferId });
+  log("Transfer offer accepted", { transferId: message.transferId, transport: state.transfer.transport });
+  renderTransfer();
+}
+
+function rejectIncomingTransferOffer(reason = "receiver_rejected") {
+  const pending = state.receivePolicy.pendingOffer;
+  state.receivePolicy.pendingOffer = null;
+  if (pending?.transferId) {
+    try {
+      sendControl({ type: "transfer_reject", transferId: pending.transferId, reason });
+    } catch {
+      // no-op
+    }
+  }
+  state.transfer.status = "idle";
+  log("Transfer offer rejected", { reason });
+  renderTransfer();
+}
+
 async function handleDataControlMessage(message) {
   switch (message.type) {
     case "transfer_offer": {
@@ -1843,9 +2465,20 @@ async function handleDataControlMessage(message) {
       if (state.transfer.incoming && state.transfer.incoming.transferId === message.transferId) {
         return;
       }
-      setIncomingTransfer(message);
-      sendControl({ type: "transfer_accept", transferId: message.transferId });
-      log("Transfer offer accepted", { transferId: message.transferId });
+      const rejectionReason = validateIncomingTransferOffer(message);
+      if (rejectionReason) {
+        sendControl({ type: "transfer_reject", transferId: message.transferId, reason: rejectionReason });
+        log("Transfer offer rejected by receive policy", { reason: rejectionReason });
+        return;
+      }
+      if (!state.receivePolicy.autoAccept) {
+        state.receivePolicy.pendingOffer = message;
+        state.transfer.status = "awaiting_accept";
+        log("Transfer offer pending receiver approval", { transferId: message.transferId });
+        renderTransfer();
+        return;
+      }
+      acceptIncomingTransferOffer(message);
       break;
     }
 
@@ -1858,6 +2491,18 @@ async function handleDataControlMessage(message) {
       }
       log("Transfer accepted by receiver");
       runOutgoingTransfer();
+      break;
+    }
+
+    case "transfer_reject": {
+      if (state.session.role !== "sender" || message.transferId !== state.transfer.transferId) {
+        return;
+      }
+      state.transfer.status = "failed";
+      state.transfer.running = false;
+      showStatusBanner(`Receiver rejected transfer: ${message.reason || "rejected"}`, "bad", false);
+      log("Transfer rejected by receiver", { reason: message.reason || "rejected" });
+      renderTransfer();
       break;
     }
 
@@ -2021,6 +2666,7 @@ async function handleSignalMessage(msg) {
   }
 
   if (msg.type === "session_created" || msg.type === "session_joined" || msg.type === "session_reconnected") {
+    state.connectionMode = "room";
     state.session.code = msg.code;
     state.session.role = msg.role;
     state.session.token = msg.token;
@@ -2080,24 +2726,52 @@ async function handleSignalMessage(msg) {
     await handleWebRtcSignal(msg.signalType, msg.payload, msg.from);
     return;
   }
+
+  if (msg.type === "relay") {
+    if (msg.relayType === "control") {
+      await handleDataControlMessage(msg.payload || {});
+      return;
+    }
+
+    if (msg.relayType === "chunk") {
+      const frameB64 = String(msg.payload?.frame || "");
+      if (!frameB64) {
+        return;
+      }
+      await handleIncomingChunk(base64ToArrayBuffer(frameB64));
+    }
+  }
 }
 
 function renderMode() {
   els.modeSender.classList.toggle("active", state.mode === "sender");
   els.modeReceiver.classList.toggle("active", state.mode === "receiver");
+  els.connectionRoom.classList.toggle("active", state.connectionMode === "room");
+  els.connectionManual.classList.toggle("active", state.connectionMode === "manual");
   document.body.dataset.mode = state.mode;
+  document.body.dataset.connectionMode = state.connectionMode;
 
   const role = state.session.role || state.mode;
   const senderVisible = role === "sender";
+  const manualVisible = state.connectionMode === "manual";
 
-  els.senderControls.classList.toggle("hidden", !senderVisible);
-  els.receiverControls.classList.toggle("hidden", senderVisible);
+  els.senderControls.classList.toggle("hidden", !senderVisible || manualVisible);
+  els.receiverControls.classList.toggle("hidden", senderVisible || manualVisible);
+  els.manualControls.classList.toggle("hidden", !manualVisible);
+  els.manualSenderPanel?.classList.toggle("hidden", !manualVisible || !senderVisible);
+  els.manualReceiverPanel?.classList.toggle("hidden", !manualVisible || senderVisible);
+  if (els.manualRoleTitle) {
+    els.manualRoleTitle.textContent = senderVisible ? "Sender setup" : "Receiver setup";
+  }
+  if (els.manualStepChip) {
+    els.manualStepChip.textContent = senderVisible ? "offer" : "answer";
+  }
   els.senderTransfer.classList.toggle("hidden", !senderVisible);
   els.receiverTransfer.classList.toggle("hidden", senderVisible);
 }
 
 function renderSession() {
-  els.roomCode.textContent = state.session.code || "- - - - - -";
+  els.roomCode.textContent = state.session.code === "manual" ? "MANUAL" : state.session.code || "- - - - - -";
   const roleLabel = state.session.role || "none";
   const lockParts = [];
   if (state.session.requiresPassphrase) {
@@ -2109,6 +2783,14 @@ function renderSession() {
   els.roleLabel.textContent = lockParts.length ? `${roleLabel} (locked: ${lockParts.join(" + ")})` : roleLabel;
   els.expiresLabel.textContent = formatExpiry(state.session.expiresAt);
 
+  if (state.session.code === "manual") {
+    if (dataChannelReady()) {
+      setChip(els.sessionState, "manual connected", "ok");
+    } else {
+      setChip(els.sessionState, state.peerJoined ? "manual connecting" : "manual pairing", "warn");
+    }
+    return;
+  }
   if (!state.session.code) {
     setChip(els.sessionState, "idle", "muted");
     return;
@@ -2121,6 +2803,27 @@ function renderSession() {
 }
 
 function renderStatusBanner() {
+  if (isManualMode()) {
+    if (state.session.code && state.peerJoined && !dataChannelReady() && state.rtc.pc?.connectionState !== "connected") {
+      showStatusBanner("Manual connection is negotiating. If it fails, create a fresh offer or use TURN.", "warn", false);
+      return;
+    }
+    if (state.session.code && !state.peerJoined) {
+      showStatusBanner("Manual mode: exchange one offer and one answer to connect.", "muted", false);
+      return;
+    }
+    if (state.transfer.status === "awaiting_channel") {
+      showStatusBanner("Manual transfer is waiting for the direct WebRTC channel.", "warn", false);
+      return;
+    }
+    if (state.transfer.status === "paused") {
+      showStatusBanner("Transfer paused. Tap resume when ready.", "warn", false);
+      return;
+    }
+    hideStatusBanner();
+    return;
+  }
+
   if (!state.wsConnected) {
     const remainingMs = state.wsReconnectAt ? Math.max(0, state.wsReconnectAt - Date.now()) : 0;
     const retryText = state.wsReconnectAt ? ` Auto-retry in ${formatSecondsLeft(remainingMs)}.` : "";
@@ -2129,7 +2832,11 @@ function renderStatusBanner() {
   }
 
   if (state.session.code && state.peerJoined && !dataChannelReady() && state.rtc.pc?.connectionState !== "connected") {
-    showStatusBanner("Re-establishing peer connection. Keep this tab open.", "warn", false);
+    if (state.transfer.transport === "relay" && canUseRelayTransport()) {
+      showStatusBanner("Direct P2P unavailable. Using signaling relay fallback (slower).", "warn", false);
+    } else {
+      showStatusBanner("Re-establishing peer connection. Keep this tab open.", "warn", false);
+    }
     return;
   }
 
@@ -2179,14 +2886,16 @@ function addSelectedFiles(filesToAdd) {
 }
 
 function renderConnection() {
-  if (state.wsConnected) {
+  if (isManualMode()) {
+    els.wsState.textContent = "not used";
+  } else if (state.wsConnected) {
     els.wsState.textContent = "connected";
   } else if (state.wsReconnectAt) {
     els.wsState.textContent = `retrying in ${formatSecondsLeft(state.wsReconnectAt - Date.now())}`;
   } else {
     els.wsState.textContent = "disconnected";
   }
-  els.peerState.textContent = state.peerJoined ? "joined" : "not joined";
+  els.peerState.textContent = state.peerJoined ? "joined" : isManualMode() ? "exchange pending" : "not joined";
 
   const pcState = state.rtc.pc?.connectionState || "new";
   const dcState = state.rtc.dc?.readyState || "closed";
@@ -2323,6 +3032,17 @@ function renderTransfer() {
       els.saveDirLabel.textContent = "Files are kept in browser memory unless a save folder is selected.";
     }
   }
+  if (els.receiveAutoAccept) {
+    els.receiveAutoAccept.checked = state.receivePolicy.autoAccept;
+  }
+  if (els.receivePendingOffer) {
+    const pending = state.receivePolicy.pendingOffer;
+    els.receivePendingOffer.classList.toggle("hidden", !pending);
+    if (pending && els.receivePendingSummary) {
+      const totalBytes = (pending.files || []).reduce((sum, file) => sum + file.size, 0);
+      els.receivePendingSummary.textContent = `${pending.files?.length || 0} file(s), ${formatBytes(totalBytes)} waiting for approval.`;
+    }
+  }
 
   els.outgoingList.replaceChildren(...state.transfer.outgoing.map((file) => makeFileItem(file)));
 
@@ -2339,7 +3059,8 @@ function renderTransfer() {
   updateTransferEmptyStates(state.transfer.outgoing.length, incomingList.length);
 
   const senderRole = (state.session.role || state.mode) === "sender";
-  els.startTransfer.disabled = !senderRole || !dataChannelReady() || !state.selectedFiles.length || state.transfer.running || isTransferBusyStatus(status);
+  const transportReady = dataChannelReady() || canUseRelayTransport();
+  els.startTransfer.disabled = !senderRole || !transportReady || !state.selectedFiles.length || state.transfer.running || isTransferBusyStatus(status);
   els.pauseTransfer.disabled = !senderRole || !state.transfer.running || state.transfer.paused;
   els.resumeTransfer.disabled = !senderRole || !state.transfer.running || !state.transfer.paused;
   els.cancelTransfer.disabled = !state.transfer.running && status !== "receiving";
@@ -2405,16 +3126,20 @@ async function onJoinSession() {
 function onLeaveSession() {
   cancelWsReconnect();
   cancelPeerRecovery();
-  if (state.session.code) {
+  if (state.session.code && !isManualMode()) {
     sendWs({ type: "leave_session" });
   }
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+  if (state.ws && state.ws.readyState === WebSocket.OPEN && !isManualMode()) {
     state.wsSuppressReconnect = true;
     state.ws.close();
   }
   clearSessionState();
+  resetManualOutputs();
+  setManualStatus("Manual mode works without the signaling server after this page loads. Exchange one offer and one answer.");
   renderAll();
-  connectSignaling();
+  if (!state.wsConnected && state.connectionMode === "room") {
+    connectSignaling();
+  }
 }
 
 async function onStartTransfer() {
@@ -2422,8 +3147,8 @@ async function onStartTransfer() {
     log("Only sender can start transfer");
     return;
   }
-  if (!dataChannelReady()) {
-    log("DataChannel is not open");
+  if (!dataChannelReady() && !canUseRelayTransport()) {
+    log("Neither direct DataChannel nor relay path is available");
     return;
   }
 
@@ -2440,7 +3165,13 @@ async function onStartTransfer() {
 
   resetTransferState();
 
+  state.transfer.transport = dataChannelReady() ? "webrtc" : "relay";
+
   state.transfer.chunkSize = chooseTransferChunkSize();
+  if (state.transfer.transport === "relay" && state.transfer.chunkSize > RELAY_CHUNK_MAX_BYTES) {
+    state.transfer.chunkSize = RELAY_CHUNK_MAX_BYTES;
+    log("Relay fallback active: chunk size capped for signaling limit", { chunkSize: state.transfer.chunkSize });
+  }
   if (state.transfer.chunkSize > 64 * 1024) {
     log("Large chunks may destabilize long transfers. Recommended: 16-64 KB for multi-GB files.");
   }
@@ -2456,6 +3187,7 @@ async function onStartTransfer() {
     sendControl({
       type: "transfer_offer",
       transferId: state.transfer.transferId,
+      transport: state.transfer.transport,
       chunkSize: state.transfer.chunkSize,
       streamingHash: true,
       files: state.transfer.outgoing.map((file) => ({
@@ -2520,21 +3252,85 @@ function onCancelTransfer() {
   renderTransfer();
 }
 
+function setConnectionMode(mode) {
+  if (state.connectionMode === mode) {
+    renderAll();
+    return;
+  }
+
+  if (state.session.code) {
+    if (!isManualMode()) {
+      sendWs({ type: "leave_session" });
+    }
+    clearSessionState();
+  } else {
+    teardownPeerConnection();
+  }
+
+  state.connectionMode = mode;
+  resetManualOutputs();
+  setManualStatus("Manual mode works without the signaling server after this page loads. Exchange one offer and one answer.");
+  if (mode === "room" && !state.wsConnected) {
+    connectSignaling();
+  }
+  renderAll();
+}
+
+function setUserMode(mode) {
+  if (state.mode === mode && (!state.session.role || state.session.role === mode)) {
+    renderMode();
+    return;
+  }
+  if (isManualMode() && state.session.code) {
+    clearSessionState();
+    resetManualOutputs();
+    setManualStatus("Manual mode works without the signaling server after this page loads. Exchange one offer and one answer.");
+  }
+  state.mode = mode;
+  renderAll();
+}
+
 function wireEvents() {
   els.themeToggle?.addEventListener("click", toggleTheme);
 
   els.modeSender.addEventListener("click", () => {
-    state.mode = "sender";
-    renderMode();
+    setUserMode("sender");
   });
 
   els.modeReceiver.addEventListener("click", () => {
-    state.mode = "receiver";
-    renderMode();
+    setUserMode("receiver");
+  });
+
+  els.connectionRoom.addEventListener("click", () => {
+    setConnectionMode("room");
+  });
+
+  els.connectionManual.addEventListener("click", () => {
+    setConnectionMode("manual");
   });
 
   els.createSession.addEventListener("click", () => {
     void onCreateSession();
+  });
+
+  els.manualCreateOffer.addEventListener("click", () => {
+    void createManualOffer();
+  });
+
+  els.manualAcceptOffer.addEventListener("click", () => {
+    void createManualAnswer();
+  });
+
+  els.manualAcceptAnswer.addEventListener("click", () => {
+    void acceptManualAnswer();
+  });
+
+  els.manualCopyOffer.addEventListener("click", () => {
+    void copyText(els.manualOfferOutput.value, "Manual offer");
+  });
+
+  els.manualCopyAnswer.addEventListener("click", () => {
+    void copyText(els.manualAnswerOutput.value, "Manual answer");
   });
 
   els.joinSession.addEventListener("click", () => {
@@ -2644,6 +3440,28 @@ function wireEvents() {
     void chooseSaveDirectory();
   });
 
+  els.receiveAutoAccept?.addEventListener("change", updateReceivePolicy);
+  els.receiveMaxFileSize?.addEventListener("input", updateReceivePolicy);
+  els.receiveMaxFileCount?.addEventListener("input", updateReceivePolicy);
+  els.receiveAcceptOffer?.addEventListener("click", () => {
+    if (state.receivePolicy.pendingOffer) {
+      acceptIncomingTransferOffer(state.receivePolicy.pendingOffer);
+    }
+  });
+  els.receiveRejectOffer?.addEventListener("click", () => {
+    rejectIncomingTransferOffer("receiver_rejected");
+  });
+
+  els.manualScanOffer?.addEventListener("click", () => {
+    void startManualScan("offer");
+  });
+
+  els.manualScanAnswer?.addEventListener("click", () => {
+    void startManualScan("answer");
+  });
+
+  els.manualStopScan?.addEventListener("click", stopManualScan);
+
   els.clearLog.addEventListener("click", () => {
     els.logOutput.textContent = "";
   });
@@ -2662,7 +3480,8 @@ function wireEvents() {
   });
 
   window.addEventListener("beforeunload", () => {
-    if (state.session.code) {
+    stopManualScan();
+    if (state.session.code && !isManualMode()) {
       state.wsSuppressReconnect = true;
       sendWs({ type: "leave_session" });
     }
@@ -2674,6 +3493,8 @@ async function boot() {
   wireEvents();
   updateDropzoneCopy();
   updateSelectedFiles([]);
+  loadReceivePolicy();
+  readReceivePolicy();
   if (els.chunkSize && !els.chunkSize.value) {
     els.chunkSize.value = String(DEFAULT_CHUNK_SIZE);
   }

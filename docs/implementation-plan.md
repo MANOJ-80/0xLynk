@@ -22,6 +22,14 @@
 - Receiver-side streaming SHA-256 verification before completed status.
 - Transfer telemetry: speed, RTT, path (direct/relay), buffered amount.
 - Runtime observability endpoints: `/health`, `/config`, `/metrics`.
+- No-server manual pairing mode:
+  - compressed WebRTC offer/answer text
+  - QR display for offer/answer payloads
+  - direct DataChannel transfer without WebSocket signaling after page load
+- Receiver transfer policies:
+  - auto-accept toggle
+  - max file size
+  - max file count
 - Deployment paths:
   - local/dev
   - Docker

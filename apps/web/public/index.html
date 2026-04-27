@@ -21,6 +21,7 @@
       };
     </script>
     <link rel="stylesheet" href="/styles.css" />
+    <script defer src="/vendor/qrcode.bundle.js"></script>
   </head>
   <body class="min-h-screen font-sans antialiased" data-theme="night">
     <svg width="0" height="0" class="absolute" aria-hidden="true" focusable="false">
@@ -86,6 +87,11 @@
               <button id="mode-receiver" class="mode-btn" type="button">Receive files</button>
             </div>
 
+            <div class="mode-grid connection-mode-grid">
+              <button id="connection-room" class="mode-btn active" type="button">Room code</button>
+              <button id="connection-manual" class="mode-btn" type="button">No-server</button>
+            </div>
+
             <div class="session-grid">
               <div class="stack" id="sender-controls">
                 <button id="create-session" class="primary" type="button">Create room code</button>
@@ -111,6 +117,109 @@
                 <label for="join-auth-password">Room password</label>
                 <input id="join-auth-password" type="password" placeholder="Optional" />
               </div>
+            </div>
+
+            <div id="manual-controls" class="manual-panel hidden">
+              <div class="manual-panel-head">
+                <div>
+                  <p class="k">No-server pairing</p>
+                  <h3 id="manual-role-title">Sender setup</h3>
+                </div>
+                <span id="manual-step-chip" class="chip chip-muted">step 1</span>
+              </div>
+
+              <div id="manual-busy" class="manual-busy hidden" role="status" aria-live="polite">
+                <span class="spinner" aria-hidden="true"></span>
+                <span id="manual-busy-text">Gathering network candidates...</span>
+              </div>
+
+              <div id="manual-sender-panel" class="manual-role-panel">
+                <div class="manual-card">
+                  <div class="manual-card-head">
+                    <span class="step-dot">1</span>
+                    <div>
+                      <h4>Create offer</h4>
+                      <p class="hint">Generates the sender pairing code.</p>
+                    </div>
+                  </div>
+                  <button id="manual-create-offer" class="primary" type="button">Create offer</button>
+                </div>
+
+                <div class="manual-card">
+                  <div class="manual-card-head">
+                    <span class="step-dot">2</span>
+                    <div>
+                      <h4>Share offer</h4>
+                      <p class="hint">Send this text or QR to the receiver.</p>
+                    </div>
+                  </div>
+                  <label for="manual-offer-output">Offer code</label>
+                  <textarea id="manual-offer-output" rows="4" readonly placeholder="Offer appears here."></textarea>
+                  <div class="action-row">
+                    <button id="manual-copy-offer" class="ghost" type="button">Copy offer</button>
+                  </div>
+                  <canvas id="manual-offer-qr" class="qr-canvas hidden" width="220" height="220" aria-label="Offer QR code"></canvas>
+                </div>
+
+                <div class="manual-card">
+                  <div class="manual-card-head">
+                    <span class="step-dot">3</span>
+                    <div>
+                      <h4>Connect answer</h4>
+                      <p class="hint">Paste or scan the receiver answer.</p>
+                    </div>
+                  </div>
+                  <label for="manual-answer-input">Answer code</label>
+                  <textarea id="manual-answer-input" rows="4" placeholder="Paste receiver answer here."></textarea>
+                  <div class="action-row">
+                    <button id="manual-scan-answer" class="ghost" type="button">Scan answer QR</button>
+                    <button id="manual-accept-answer" class="primary" type="button">Connect</button>
+                  </div>
+                </div>
+              </div>
+
+              <div id="manual-receiver-panel" class="manual-role-panel hidden">
+                <div class="manual-card">
+                  <div class="manual-card-head">
+                    <span class="step-dot">1</span>
+                    <div>
+                      <h4>Import offer</h4>
+                      <p class="hint">Paste or scan the sender offer.</p>
+                    </div>
+                  </div>
+                  <label for="manual-offer-input">Offer code</label>
+                  <textarea id="manual-offer-input" rows="4" placeholder="Paste sender offer here."></textarea>
+                  <div class="action-row">
+                    <button id="manual-scan-offer" class="ghost" type="button">Scan offer QR</button>
+                    <button id="manual-accept-offer" class="primary" type="button">Create answer</button>
+                  </div>
+                </div>
+
+                <div class="manual-card">
+                  <div class="manual-card-head">
+                    <span class="step-dot">2</span>
+                    <div>
+                      <h4>Share answer</h4>
+                      <p class="hint">Send this text or QR back to the sender.</p>
+                    </div>
+                  </div>
+                  <label for="manual-answer-output">Answer code</label>
+                  <textarea id="manual-answer-output" rows="4" readonly placeholder="Answer appears here."></textarea>
+                  <div class="action-row">
+                    <button id="manual-copy-answer" class="ghost" type="button">Copy answer</button>
+                  </div>
+                  <canvas id="manual-answer-qr" class="qr-canvas hidden" width="220" height="220" aria-label="Answer QR code"></canvas>
+                </div>
+              </div>
+
+              <div id="manual-scanner" class="scanner-panel hidden">
+                <video id="manual-scanner-video" playsinline muted></video>
+                <div class="scanner-actions">
+                  <p id="manual-scanner-status" class="hint">Point the camera at the QR code.</p>
+                  <button id="manual-stop-scan" class="ghost" type="button">Stop scan</button>
+                </div>
+              </div>
+              <p id="manual-status" class="hint">Manual mode works without the signaling server after this page loads. Exchange one offer and one answer.</p>
             </div>
 
             <div class="room-display">
@@ -217,6 +326,27 @@
             </div>
 
             <div id="receiver-transfer" class="stack hidden">
+              <div class="policy-grid">
+                <label class="check-row">
+                  <input id="receive-auto-accept" type="checkbox" checked />
+                  Auto-accept transfer offers
+                </label>
+                <label>
+                  Max file size (MB)
+                  <input id="receive-max-file-size" type="number" min="0" step="1" placeholder="0 = unlimited" />
+                </label>
+                <label>
+                  Max file count
+                  <input id="receive-max-file-count" type="number" min="0" step="1" placeholder="0 = unlimited" />
+                </label>
+              </div>
+              <div id="receive-pending-offer" class="pending-offer hidden">
+                <p id="receive-pending-summary" class="hint">Incoming transfer pending.</p>
+                <div class="action-row">
+                  <button id="receive-accept-offer" class="primary" type="button">Accept</button>
+                  <button id="receive-reject-offer" class="danger" type="button">Reject</button>
+                </div>
+              </div>
               <div class="input-row">
                 <p id="save-dir-label" class="hint">Files are kept in browser memory unless a save folder is selected.</p>
                 <button id="choose-save-dir" class="ghost" type="button">Choose save folder</button>

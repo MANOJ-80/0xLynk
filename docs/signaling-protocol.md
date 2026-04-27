@@ -13,6 +13,10 @@ All messages are JSON over WebSocket.
 - `signal`
   - Example: `{ "type": "signal", "signalType": "offer", "payload": { ... } }`
   - `signalType`: `offer` | `answer` | `ice-candidate`
+- `relay`
+  - Example: `{ "type": "relay", "relayType": "control", "payload": { ... } }`
+  - `relayType`: `control` | `chunk`
+  - Used only as a degraded fallback when direct WebRTC is unavailable.
 - `leave_session`
   - Example: `{ "type": "leave_session" }`
 - `ping`
@@ -28,6 +32,7 @@ All messages are JSON over WebSocket.
 - `peer_reconnected`: `{ type, code, role }`
 - `peer_left`: `{ type, code, reason, role }`
 - `signal`: `{ type, signalType, payload, from }`
+- `relay`: `{ type, relayType, payload, from }`
 - `session_closed`: `{ type, code, reason }`
 - `session_expired`: `{ type, code }`
 - `pong`: `{ type, ts }`
@@ -46,7 +51,8 @@ All messages are JSON over WebSocket.
 
 ## Rules
 
-- Signaling relays metadata only (SDP/ICE). File bytes are not allowed.
+- Normal signaling relays metadata only (SDP/ICE).
+- Relay fallback may forward base64 chunk frames through WebSocket when direct WebRTC is unavailable. This is slower and exists only as a degraded reliability path.
 - Each room supports exactly two peers.
 - Room codes are 6-digit numeric strings.
 - Expired sessions cannot be joined.

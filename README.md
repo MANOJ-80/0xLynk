@@ -30,6 +30,8 @@
 
 - STUN default + TURN fallback support.
 - Runtime ICE configuration from server (`/config`) with client-side TURN override fields.
+- No-server manual pairing mode with compressed WebRTC offer/answer text and QR display.
+- Camera QR scanning for manual offer/answer import when supported by the browser.
 - Auto WebSocket reconnect with jittered backoff.
 - Peer recovery and renegotiation when channel drops.
 - Adaptive flow-control profile based on RTT/path (direct vs relay).
@@ -91,6 +93,8 @@ npm run start:signaling:prod
 
 ## Usage flow
 
+### Room-code mode
+
 1. On sender tab/device:
    - Keep `Send files` mode.
    - Click `Create room code`.
@@ -112,12 +116,34 @@ npm run start:signaling:prod
    - Files are verified (SHA-256).
    - Download verified files (or stream to selected folder if supported).
 
+### No-server manual mode
+
+1. On both devices:
+   - Select `No-server`.
+
+2. On sender:
+   - Click `Create offer`.
+   - Share the offer text or QR with the receiver.
+
+3. On receiver:
+   - Paste the sender offer.
+   - Click `Create answer`.
+   - Share the answer text or QR back to the sender.
+
+4. On sender:
+   - Paste the receiver answer.
+   - Click `Connect`.
+   - Start the file transfer once the DataChannel opens.
+
+Manual mode still uses public STUN for NAT traversal. Some strict networks require TURN; without TURN, direct WebRTC may fail behind restrictive NAT or firewalls. QR scanning uses the browser camera and falls back to copy/paste on unsupported browsers.
+
 ## NPM scripts (root)
 
 - `npm run start:signaling` - run signaling server in watch mode.
 - `npm run start:signaling:prod` - run signaling server in prod mode.
 - `npm run test:smoke` - protocol + auth + reconnect smoke test.
 - `npm run test:browser-transfer` - Playwright sender/receiver browser smoke transfer.
+- `npm run test:manual-transfer` - Playwright manual offer/answer transfer smoke test.
 - `npm run benchmark:transfer` - transfer model benchmark by chunk/profile.
 - `npm run showcase:capture` - capture screenshots + optional GIF.
 - `npm run docker:up` - build and run app container.

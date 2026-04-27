@@ -10,6 +10,7 @@
     "start:signaling:prod": "npm --workspace @0xlynk/signaling-server run start",
     "test:smoke": "node scripts/smoke-signaling.cjs",
     "test:browser-transfer": "node scripts/smoke-browser-transfer.mjs",
+    "test:manual-transfer": "node scripts/smoke-manual-transfer.mjs",
     "benchmark:transfer": "node scripts/benchmark-transfer-model.cjs",
     "showcase:capture": "node scripts/capture-showcase.mjs",
     "docker:up": "docker compose up --build",
@@ -20,6 +21,10 @@
     "demo:down": "docker compose -f docker-compose.yml -f docker-compose.demo.yml down"
   },
   "devDependencies": {
+    "browserify": "^17.0.1",
     "playwright": "^1.56.0"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
   }
 }

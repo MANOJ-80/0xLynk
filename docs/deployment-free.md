@@ -82,6 +82,8 @@ Set one of:
 
 Without TURN, peers behind restrictive networks may fail to establish transfer channels.
 
+For a no-paid-provider path, self-host coturn on an always-free VM. See [Self-hosted TURN](./turn-self-host.md).
+
 ## Recommended runtime values for demos
 
 - `SESSION_TTL_MS=10800000` (3 hours) for long sessions.
