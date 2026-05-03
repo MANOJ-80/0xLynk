@@ -35,6 +35,7 @@
 - Auto WebSocket reconnect with jittered backoff.
 - Peer recovery and renegotiation when channel drops.
 - Adaptive flow-control profile based on RTT/path (direct vs relay).
+- Room-code mode can degrade to signaling relay transport when direct P2P fails.
 
 ### Product UI/UX
 
@@ -135,7 +136,13 @@ npm run start:signaling:prod
    - Click `Connect`.
    - Start the file transfer once the DataChannel opens.
 
-Manual mode still uses public STUN for NAT traversal. Some strict networks require TURN; without TURN, direct WebRTC may fail behind restrictive NAT or firewalls. QR scanning uses the browser camera and falls back to copy/paste on unsupported browsers.
+Manual mode is strict direct WebRTC (no signaling relay transport). It still uses public STUN for NAT traversal. On strict NAT/firewall networks, direct P2P may fail; in those cases use Room-code mode (relay fallback) or configure TURN for reliable direct connectivity. QR scanning uses the browser camera and falls back to copy/paste on unsupported browsers.
+
+### Connectivity behavior by mode
+
+- `No-server manual`: direct WebRTC only (STUN-assisted), no payload relay.
+- `Room-code`: direct WebRTC first; if direct path fails and both peers are still signaling-connected, app can relay transfer bytes via signaling as a degraded fallback.
+- `TURN configured`: improves direct cross-network success and reduces need for degraded relay behavior.
 
 ## NPM scripts (root)
 
@@ -274,6 +281,7 @@ If `ffmpeg` exists, a GIF preview is generated.
 
 ## Notes
 
-- 0xLynk signaling server does not transport or persist file payload bytes.
+- In normal/direct mode, signaling does not transport or persist payload bytes.
+- In degraded relay fallback mode (room-code sessions), signaling may forward payload bytes between peers and does not persist them.
 - TURN is strongly recommended for hostile NAT/firewall environments.
 - Session reconnect metadata is stored locally in browser storage for in-session recovery.
